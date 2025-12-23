@@ -1893,9 +1893,10 @@ class EnemyUnit {
         if (this.flashTime > 0) this.flashTime--;
 
         // [Patch] Improved Shield Collision (Hitbox Extended Upwards)
-        // シールド有効時は、見た目上のシールド上端(CASTLE_Y - 45付近)で判定を行う
+        // シールド有効時は、ドーム状のシールド判定を行う（簡易的にY座標のみで判定範囲を拡大）
         if (engineState.isShieldActive && engineState.energy > 15) {
-            if (this.positionY + (this.size / 2) > GAME_SETTINGS.CASTLE_Y - 45) {
+            // ドームの高さに合わせて判定ラインを引き上げ (45 -> 100)
+            if (this.positionY + (this.size / 2) > GAME_SETTINGS.CASTLE_Y - 100) {
                 // Shield Bash Logic
                 // Artifact: Spike Shield (shield_bash_mul)
                 const bashMult = 1 + (engineState.stats.shield_bash_mul || 0);
@@ -2316,7 +2317,8 @@ class EnemyProjectile {
 
         if (engineState.isShieldActive) {
             const distToCastle = GAME_SETTINGS.CASTLE_Y - this.y;
-            if (distToCastle < 60 && distToCastle > 0) {
+            // ドーム高さに合わせて判定距離を拡大 (60 -> 140)
+            if (distToCastle < 140 && distToCastle > 0) {
                 if (engineState.shieldTimer < 20) { // [Patch] Ease JG window (15->20)
                     this.isReflected = true;
                     this.speed = -15;
@@ -2955,50 +2957,69 @@ function renderScene() {
     gameContext.fillStyle = "#2c3e50";
     gameContext.fillRect(0, GAME_SETTINGS.CASTLE_Y, gameCanvas.width, gameCanvas.height - GAME_SETTINGS.CASTLE_Y);
 
-    // --- Enhanced Shield Rendering ---
+    // --- Enhanced Shield Rendering (Arc Dome) ---
     if (engineState.isShieldActive || engineState.shieldImpactTimer > 0) {
         gameContext.save();
         const isJust = engineState.shieldTimer < 20;
         const isImpact = engineState.shieldImpactTimer > 0;
 
-        // Impact Flash Decay
         if (isImpact) engineState.shieldImpactTimer--;
 
-        // Colors
+        // シールドの設定
+        const centerX = RENDER_CONSTANTS.TURRET_POS_X;
+        const centerY = GAME_SETTINGS.CASTLE_Y;
+        const radiusX = gameCanvas.width / 1.5; // 横幅広めになだらかに
+        const radiusY = 140; // 砲台を覆う十分な高さ
         const baseColor = isImpact ? "#ffffff" : (isJust ? "#66fcf1" : "#45a29e");
         const glowColor = isImpact ? "#ffffff" : "#66fcf1";
-        const shieldHeight = 50;
-        const shieldY = GAME_SETTINGS.CASTLE_Y - shieldHeight;
 
-        // 1. Energy Field Body (Gradient)
-        const grad = gameContext.createLinearGradient(0, shieldY, 0, GAME_SETTINGS.CASTLE_Y);
-        grad.addColorStop(0, `rgba(${isImpact?255:102}, ${isImpact?255:252}, ${isImpact?255:241}, ${isImpact?0.8:0.4})`);
-        grad.addColorStop(1, "rgba(0,0,0,0)");
+        // パスの作成（ドーム型）
+        gameContext.beginPath();
+        gameContext.ellipse(centerX, centerY, radiusX, radiusY, 0, Math.PI, 2 * Math.PI);
+
+        // 1. 内部グラデーション（放射状）
+        const grad = gameContext.createRadialGradient(
+            centerX, centerY, radiusY * 0.2,
+            centerX, centerY, radiusY
+        );
+        const alphaMain = isImpact ? 0.6 : 0.25;
+        const alphaCore = isImpact ? 0.3 : 0.05;
+
+        grad.addColorStop(0, `rgba(102, 252, 241, ${alphaCore})`);
+        grad.addColorStop(0.7, `rgba(102, 252, 241, ${alphaMain})`);
+        grad.addColorStop(1, `rgba(102, 252, 241, 0.7)`); // 縁付近を濃く
 
         gameContext.fillStyle = grad;
-        gameContext.fillRect(0, shieldY, gameCanvas.width, shieldHeight);
+        gameContext.fill();
 
-        // 2. Top Edge (Thick & Glowing)
-        gameContext.shadowBlur = isImpact ? 40 : (isJust ? 20 : 10);
+        // 2. 発光する縁（アウトライン）
+        gameContext.shadowBlur = isImpact ? 40 : (isJust ? 25 : 15);
         gameContext.shadowColor = glowColor;
         gameContext.strokeStyle = baseColor;
-        gameContext.lineWidth = isImpact ? 8 : (isJust ? 5 : 3);
-
-        gameContext.beginPath();
-        gameContext.moveTo(0, shieldY);
-        gameContext.lineTo(gameCanvas.width, shieldY);
+        gameContext.lineWidth = isImpact ? 6 : (isJust ? 4 : 2);
         gameContext.stroke();
 
-        // 3. Grid Pattern (Optional Tech feel)
+        // 3. ヘックスグリッド模様（Tech感）
         if (!isImpact) {
-            gameContext.strokeStyle = "rgba(102, 252, 241, 0.2)";
+            gameContext.save();
+            gameContext.clip(); // ドーム内に限定
+
+            gameContext.strokeStyle = "rgba(102, 252, 241, 0.15)";
             gameContext.lineWidth = 1;
+            gameContext.shadowBlur = 0;
+
+            // 簡易的なハニカム風ライン描画
+            const hexSize = 40;
             gameContext.beginPath();
-            for(let i=0; i<gameCanvas.width; i+=40) {
-                gameContext.moveTo(i, shieldY);
-                gameContext.lineTo(i + 20, GAME_SETTINGS.CASTLE_Y);
+            // 斜め線のみでグリッド感を出す
+            for (let x = -gameCanvas.width; x < gameCanvas.width * 2; x += hexSize) {
+                gameContext.moveTo(x, centerY);
+                gameContext.lineTo(x + radiusY, centerY - radiusY * 1.5);
+                gameContext.moveTo(x, centerY);
+                gameContext.lineTo(x - radiusY, centerY - radiusY * 1.5);
             }
             gameContext.stroke();
+            gameContext.restore();
         }
 
         gameContext.restore();
