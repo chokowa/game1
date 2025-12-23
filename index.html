@@ -50,24 +50,24 @@
         /* --- PoE Style HUD (Bottom Panel) --- */
         #bottom-hud {
             position: absolute; bottom: 0; left: 0; width: 100%; 
-            /* セーフエリア分高さを確保 */
-            height: calc(140px + env(safe-area-inset-bottom));
-            background: linear-gradient(to top, #0b0c10 80%, transparent 100%);
+            /* 高さ調整: 140px -> 120px */
+            height: calc(120px + env(safe-area-inset-bottom));
+            /* グラデーションを調整して上部の抜けを良くする */
+            background: linear-gradient(to top, #0b0c10 60%, transparent 100%);
             display: flex; justify-content: space-between; align-items: flex-end;
-            /* セーフエリア分余白を追加 */
             padding-bottom: calc(10px + env(safe-area-inset-bottom)); 
             z-index: 50;
-            pointer-events: none; /* 下のレイヤーをクリック可能に */
+            pointer-events: none;
             box-sizing: border-box;
         }
 
         /* Vertical Meters (HP / Energy) - Mobile Optimized */
         .orb-container {
-            width: 40px; height: 120px; /* Slim vertical bar */
+            width: 40px; height: 110px; /* 少し短縮: 120px -> 110px */
             position: relative;
-            margin: 0 10px 5px 10px;
+            margin: 0 8px 0 8px; /* マージン微調整 */
             pointer-events: auto;
-            border-radius: 20px; /* Capsule shape */
+            border-radius: 20px;
             background: #111;
             border: 2px solid #555;
             box-shadow: 0 0 15px rgba(0,0,0,0.8);
@@ -130,11 +130,11 @@
             display: flex; gap: 10px;
         }
         .hud-btn {
-            width: 45px; height: 45px;
+            width: 40px; height: 40px; /* コンパクト化: 45px -> 40px */
             background: #1f2833; border: 2px solid #45a29e;
             border-radius: 8px; color: #66fcf1;
             display: flex; flex-direction: column; align-items: center; justify-content: center;
-            cursor: pointer; font-size: 18px; transition: 0.1s;
+            cursor: pointer; font-size: 16px; transition: 0.1s;
         }
         .hud-btn:active { transform: scale(0.95); }
         .hud-btn span { font-size: 8px; margin-top: 2px; }

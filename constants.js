@@ -12,7 +12,7 @@ export const GAME_SETTINGS = {
     XP_SCALING: 1.5,        // 1.8 -> 1.5: 後半の必要XPインフレを少し緩やかにする
     DROP_CHANCE: 0.3,       // 0.25 -> 0.3
   
-    CASTLE_Y: 800,
+    CASTLE_Y: 720,          // 800 -> 720: UI被り防止のため砲台位置を上げる
     CASTLE_DAMAGE: 30,      // 50 -> 30
     INVENTORY_CAPACITY: 40,
     FUSION_COST: 3,
