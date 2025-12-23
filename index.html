@@ -61,38 +61,43 @@
             box-sizing: border-box;
         }
 
-        /* Orbs (HP / Energy) */
+        /* Vertical Meters (HP / Energy) - Mobile Optimized */
         .orb-container {
-            width: 100px; height: 100px;
+            width: 40px; height: 120px; /* Slim vertical bar */
             position: relative;
-            margin: 0 10px;
+            margin: 0 10px 5px 10px;
             pointer-events: auto;
-            border-radius: 50%;
+            border-radius: 20px; /* Capsule shape */
             background: #111;
-            border: 4px solid #333;
-            box-shadow: 0 0 20px rgba(0,0,0,0.8);
+            border: 2px solid #555;
+            box-shadow: 0 0 15px rgba(0,0,0,0.8);
             overflow: hidden;
+            display: flex; flex-direction: column; justify-content: flex-end;
         }
         .orb-fill {
-            position: absolute; bottom: 0; left: 0; width: 100%; height: 100%;
+            width: 100%; 
+            /* height controlled by JS */
             transition: height 0.2s;
         }
         .orb-fill.hp {
-            background: radial-gradient(circle at 30% 30%, #ff6b6b, #c0392b);
-            box-shadow: 0 0 20px #c0392b;
+            background: linear-gradient(to top, #c0392b, #ff6b6b);
+            box-shadow: 0 0 10px #c0392b;
         }
         .orb-fill.energy {
-            background: radial-gradient(circle at 30% 30%, #74b9ff, #2980b9);
-            box-shadow: 0 0 20px #2980b9;
+            background: linear-gradient(to top, #2980b9, #74b9ff);
+            box-shadow: 0 0 10px #2980b9;
         }
         .orb-text {
-            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            font-weight: bold; font-size: 16px; color: #fff; text-shadow: 1px 1px 2px #000;
+            position: absolute; top: 8px; left: 50%; transform: translateX(-50%);
+            font-size: 22px; line-height: 1; z-index: 10;
+            filter: drop-shadow(0 0 2px #000);
             pointer-events: none;
         }
         .orb-label {
-            position: absolute; bottom: -20px; width: 100%; text-align: center;
-            font-size: 12px; font-weight: bold; color: #aaa;
+            position: absolute; bottom: 8px; width: 100%; text-align: center;
+            font-size: 10px; font-weight: bold; color: #fff; 
+            text-shadow: 0 0 4px #000; z-index: 10; font-family: monospace;
+            pointer-events: none;
         }
 
         /* Center Panel (Controls & Stats) */
@@ -380,7 +385,7 @@
         <div id="bottom-hud">
             <div class="orb-container left">
                 <div id="hp-orb-fill" class="orb-fill hp" style="height: 100%;"></div>
-                <div class="orb-text">HP</div>
+                <div class="orb-text">❤️</div>
                 <div class="orb-label" id="hp-text">500</div>
             </div>
 
@@ -429,7 +434,7 @@
                  ontouchstart="engineState.setShieldState(true); event.preventDefault();" 
                  ontouchend="engineState.setShieldState(false); event.preventDefault();">
                 <div id="energy-orb-fill" class="orb-fill energy" style="height: 100%;"></div>
-                <div class="orb-text" style="font-size:12px;">SHIELD<br>MP</div>
+                <div class="orb-text">🛡️</div>
                 <div class="orb-label" id="energy-text">100</div>
             </div>
         </div>
