@@ -1893,10 +1893,10 @@ class EnemyUnit {
         if (this.flashTime > 0) this.flashTime--;
 
         // [Patch] Improved Shield Collision (Hitbox Extended Upwards)
-        // シールド有効時は、ドーム状のシールド判定を行う（簡易的にY座標のみで判定範囲を拡大）
+        // シールド有効時は、ドーム状のシールド判定を行う
         if (engineState.isShieldActive && engineState.energy > 15) {
-            // ドームの高さに合わせて判定ラインを引き上げ (45 -> 100)
-            if (this.positionY + (this.size / 2) > GAME_SETTINGS.CASTLE_Y - 100) {
+            // ドームの高さに合わせて判定ラインを調整
+            if (this.positionY + (this.size / 2) > GAME_SETTINGS.CASTLE_Y - 60) {
                 // Shield Bash Logic
                 // Artifact: Spike Shield (shield_bash_mul)
                 const bashMult = 1 + (engineState.stats.shield_bash_mul || 0);
@@ -2317,8 +2317,8 @@ class EnemyProjectile {
 
         if (engineState.isShieldActive) {
             const distToCastle = GAME_SETTINGS.CASTLE_Y - this.y;
-            // ドーム高さに合わせて判定距離を拡大 (60 -> 140)
-            if (distToCastle < 140 && distToCastle > 0) {
+            // ドーム高さに合わせて判定距離を調整
+            if (distToCastle < 75 && distToCastle > 0) {
                 if (engineState.shieldTimer < 20) { // [Patch] Ease JG window (15->20)
                     this.isReflected = true;
                     this.speed = -15;
@@ -2969,7 +2969,7 @@ function renderScene() {
         const centerX = RENDER_CONSTANTS.TURRET_POS_X;
         const centerY = GAME_SETTINGS.CASTLE_Y;
         const radiusX = gameCanvas.width / 1.5; // 横幅広めになだらかに
-        const radiusY = 140; // 砲台を覆う十分な高さ
+        const radiusY = 70; // 砲台の先端より少し高い位置
         const baseColor = isImpact ? "#ffffff" : (isJust ? "#66fcf1" : "#45a29e");
         const glowColor = isImpact ? "#ffffff" : "#66fcf1";
 
