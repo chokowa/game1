@@ -10,7 +10,7 @@
         /* --- Quick Buy Buttons --- */
         .quick-buy-container {
             position: absolute;
-            top: 675px; /* 砲台の少し上に配置 */
+            top: 75%; /* 675px -> 75%: 画面サイズに応じて可変配置 */
             display: flex;
             flex-direction: row;
             gap: 8px;
@@ -94,6 +94,18 @@
             object-fit: contain;
             /* キャンバス上でのスクロールやズームを禁止 */
             touch-action: none;
+        }
+
+        /* --- Mobile Optimization --- */
+        @media (max-width: 600px) {
+            #device-frame {
+                border: none;       /* ボーダー削除で隙間の違和感を軽減 */
+                box-shadow: none;   /* シャドウ削除 */
+                max-height: 100%;   /* 100dvhだとアドレスバーの影響を受ける場合があるため100%も併用検討 */
+            }
+            body {
+                background: #0b0c10; /* ゲーム背景色に合わせて隙間を目立たなくする */
+            }
         }
 
         /* --- PoE Style HUD (Bottom Panel) --- */
@@ -587,10 +599,10 @@
         </div>
 
         <!-- Side HUD Buttons: Swap (Left) and Pause (Right) -->
-        <div class="side-hud-btn" style="bottom:150px; left:10px; border-color:#00d2d3; color:#00d2d3;"
+        <div class="side-hud-btn" style="bottom:16%; left:10px; border-color:#00d2d3; color:#00d2d3;"
              onclick="engineState.swapLoadout()">♻️</div>
 
-        <div class="side-hud-btn" style="bottom:150px; right:10px;"
+        <div class="side-hud-btn" style="bottom:16%; right:10px;"
              onclick="engineState.togglePause()">⏸</div>
 
         <div id="upgrade-selection-modal" class="modal-overlay hidden">
