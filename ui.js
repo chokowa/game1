@@ -922,9 +922,10 @@ export function refreshInventoryInterface() {
             // Delete button on hover/tap
             const delBtn = document.createElement('div');
             delBtn.innerText = "×";
-            delBtn.style.cssText = "position:absolute; top:-5px; right:-5px; background:red; color:white; width:15px; height:15px; border-radius:50%; font-size:10px; line-height:15px; text-align:center; display:none;";
+            delBtn.style.cssText = "position:absolute; top:-5px; right:-5px; background:#e74c3c; color:white; width:18px; height:18px; border-radius:50%; font-size:12px; line-height:18px; text-align:center; display:none; pointer-events:auto; border:1px solid white;";
             el.appendChild(delBtn);
 
+            // PC hover
             el.onmouseenter = (e) => {
                 delBtn.style.display = "block";
                 window.showTooltip(e, art);
@@ -933,10 +934,21 @@ export function refreshInventoryInterface() {
                 delBtn.style.display = "none";
                 window.hideTooltip();
             };
-            
-            // Touch support for delete
+
+            // アイコンクリック時はツールチップのみ（破棄しない）
             el.onclick = (e) => {
-                if (confirm(`「${art.name}」を破棄しますか？`)) {
+                e.stopPropagation();
+                window.showTooltip(e, art);
+                // モバイル用に×ボタンを一瞬表示させる
+                delBtn.style.display = "block";
+                setTimeout(() => { if(!el.matches(':hover')) delBtn.style.display = "none"; }, 3000);
+            };
+
+            // ×ボタンをクリックした時だけ破棄の確認を出す
+            delBtn.onclick = (e) => {
+                e.stopPropagation(); // 親のel.onclickを発動させない
+                audioManager.play('CLICK');
+                if (confirm(`「${art.name}」を破棄してスロットを空けますか？`)) {
                     engineState.artifacts.splice(idx, 1);
                     engineState.recalcStats();
                     window.refreshInventoryInterface();

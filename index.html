@@ -10,21 +10,22 @@
         /* --- Quick Buy Buttons --- */
         .quick-buy-container {
             position: absolute;
-            top: 700px; /* 砲台の少し上 */
+            top: 675px; /* 砲台の少し上に配置 */
             display: flex;
             flex-direction: row;
-            gap: 10px;
-            z-index: 45;
+            gap: 8px;
+            z-index: 100; /* 最前面に確実に表示 */
             pointer-events: none;
-            /* 中央基準で配置 */
-            left: 50%;
-            transform: translateX(-50%);
-            width: auto;
-            justify-content: center;
         }
-        /* 砲台を挟んで左右に40pxずらす */
-        #quick-buy-left { margin-left: -155px; } 
-        #quick-buy-right { margin-left: 155px; }
+        /* 砲台(300px)を中心に左右に振り分け */
+        #quick-buy-left { 
+            right: 50%; 
+            margin-right: 60px; /* 砲台の左側に寄せる */
+        } 
+        #quick-buy-right { 
+            left: 50%; 
+            margin-left: 60px; /* 砲台の右側に寄せる */
+        }
 
         /* タッチターゲットを最小44px以上に確保（iOS/Android推奨） */
         .quick-btn, .hud-btn, .side-hud-btn, .inv-item, .gem-slot {
@@ -218,7 +219,9 @@
         .modal-overlay.hidden { opacity: 0; pointer-events: none; }
 
         .modal-header {
-            padding: 15px; border-bottom: 2px solid #45a29e;
+            /* モバイルのノッチ対策: 上部にセーフエリア分のパディングを追加 */
+            padding: calc(15px + env(safe-area-inset-top)) 15px 15px 15px;
+            border-bottom: 2px solid #45a29e;
             display: flex; justify-content: space-between; align-items: center;
             background: #0b0c10;
         }
