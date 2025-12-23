@@ -1055,14 +1055,24 @@ let shakeTime = 0;
 let shakeIntensity = 0;
 let customAiFunction = null;
 
-// --- Input Handling ---
-gameCanvas.addEventListener('mousedown', (e) => {
-    if (e.button === 2) engineState.setShieldState(true);
-    else handleCanvasInput(e);
-});
-gameCanvas.addEventListener('mouseup', (e) => {
+// --- Input Handling (Unified Mouse & Touch) ---
+// Pointer Eventsを使用してPC/スマホの入力を統合
+gameCanvas.addEventListener('pointerdown', (e) => {
+    // 右クリック(button 2)またはペン入力のバレルボタンでシールド
+    if (e.button === 2) {
+        engineState.setShieldState(true);
+    } else {
+        handleCanvasInput(e);
+    }
+    // タッチ時のスクロール等のデフォルト挙動を防止
+    if (e.pointerType === 'touch') e.preventDefault();
+}, { passive: false });
+
+gameCanvas.addEventListener('pointerup', (e) => {
     if (e.button === 2) engineState.setShieldState(false);
 });
+
+// キーボード制御はPC用に維持
 window.addEventListener('keydown', (e) => {
     if (['Space', 'ShiftLeft', 'ShiftRight'].includes(e.code)) {
         if (!engineState.isPaused && !engineState.isGameOver) engineState.setShieldState(true);
@@ -1071,16 +1081,20 @@ window.addEventListener('keydown', (e) => {
 window.addEventListener('keyup', (e) => {
     if (['Space', 'ShiftLeft', 'ShiftRight'].includes(e.code)) engineState.setShieldState(false);
 });
-gameCanvas.addEventListener('contextmenu', e => e.preventDefault());
-gameCanvas.addEventListener('touchstart', (e) => {
-    const touch = e.changedTouches[0];
-    handleCanvasInput({ clientX: touch.clientX, clientY: touch.clientY });
-}, { passive: false });
 
+// 右クリックメニューを禁止
+gameCanvas.addEventListener('contextmenu', e => e.preventDefault());
+
+/**
+ * 座標変換と入力処理
+ */
 function handleCanvasInput(event) {
     const rect = gameCanvas.getBoundingClientRect();
-    const clickX = (event.clientX - rect.left) * (gameCanvas.width / rect.width);
-    const clickY = (event.clientY - rect.top) * (gameCanvas.height / rect.height);
+    // キャンバスの論理サイズ(600x900)に合わせて座標をスケール
+    const scaleX = gameCanvas.width / rect.width;
+    const scaleY = gameCanvas.height / rect.height;
+    const clickX = (event.clientX - rect.left) * scaleX;
+    const clickY = (event.clientY - rect.top) * scaleY;
     
     // Pickup
     for (let i = engineState.activeDrops.length - 1; i >= 0; i--) {

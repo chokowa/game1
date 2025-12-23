@@ -105,7 +105,6 @@ export function getTooltipContent(item) {
 
 export function showTooltip(ev, item) {
     if (!item) return;
-    // 既存の非表示タイマーがあれば解除する
     if (window.tooltipHideTimer) {
         clearTimeout(window.tooltipHideTimer);
         window.tooltipHideTimer = null;
@@ -117,10 +116,12 @@ export function showTooltip(ev, item) {
 window.showTooltip = showTooltip;
 
 export function moveTooltip(ev) {
-    const offset = 15;
-    // Handle Touch Event
-    const clientX = ev.touches ? ev.touches[0].clientX : ev.clientX;
-    const clientY = ev.touches ? ev.touches[0].clientY : ev.clientY;
+    const offset = 20;
+    // タッチイベントとマウスイベントの両方の座標に対応
+    const clientX = (ev.touches && ev.touches[0]) ? ev.touches[0].clientX : ev.clientX;
+    const clientY = (ev.touches && ev.touches[0]) ? ev.touches[0].clientY : ev.clientY;
+
+    if (clientX === undefined || clientY === undefined) return;
 
     let left = clientX + offset;
     let top = clientY + offset;
@@ -278,21 +279,18 @@ export function updateArtifactHud() {
 
     window.engineState.artifacts.forEach(art => {
         const icon = document.createElement('div');
-        // pointer-events: none for inner content to prevent flickering
         icon.innerHTML = `<div style="pointer-events:none;">${art.icon}</div>`;
-        icon.style.cssText = `width:32px; height:32px; background:rgba(0,0,0,0.6); border:1px solid ${art.color}; border-radius:4px; text-align:center; line-height:30px; font-size:18px; cursor:help; display:flex; align-items:center; justify-content:center;`;
+        icon.style.cssText = `width:32px; height:32px; background:rgba(0,0,0,0.6); border:1px solid ${art.color}; border-radius:4px; text-align:center; line-height:30px; font-size:18px; cursor:help; display:flex; align-items:center; justify-content:center; touch-action:none;`;
 
+        // PC hover
         icon.onmouseenter = (e) => window.showTooltip(e, art);
-        icon.onmousemove = (e) => window.moveTooltip(e); // Added move handler
+        icon.onmousemove = (e) => window.moveTooltip(e);
         icon.onmouseleave = window.hideTooltip;
 
-        // Touch support: Toggle tooltip on tap
+        // Mobile touch (タップで表示、離して数秒で消える既存ロジックを利用)
         icon.ontouchstart = (e) => {
-            e.preventDefault();
             window.showTooltip(e.touches[0], art);
         };
-        icon.ontouchend = window.hideTooltip;
-        icon.ontouchcancel = window.hideTooltip;
 
         container.appendChild(icon);
     });
@@ -605,24 +603,23 @@ export function refreshInventoryInterface() {
     const oldMenu = document.getElementById('action-menu');
     if (oldMenu) oldMenu.remove();
 
-    // --- Interaction Handler (Tap/Click) ---
+    // --- Interaction Handler (Mobile Optimized 2-Step Move) ---
     const handleSlotClick = (e, uuid, type, slotId) => {
         e.stopPropagation();
-        
-        // Case 1: Item Selected -> Move to Target
+        e.preventDefault(); // ダブルタップズーム等を防止
+
+        // 1. すでにアイテムが選択されている場合、ターゲットへ移動を試みる
         if (selectedItemUuid) {
-            // If clicking same item, deselect
+            // 同じアイテムをタップしたら選択解除
             if (selectedItemUuid === uuid) {
                 selectedItemUuid = null;
+                window.hideTooltip();
                 refreshInventoryInterface();
                 return;
             }
 
-            // Execute Move
             const fromInv = engineState.inventory.find(i => i.uuid === selectedItemUuid);
-            
             if (fromInv) {
-                // Moving from Inventory to Slot
                 if (type === 'SLOT') {
                     engineState.equipItem(selectedItemUuid, slotId);
                     selectedItemUuid = null;
@@ -633,21 +630,27 @@ export function refreshInventoryInterface() {
                     engineState.sellItem(selectedItemUuid);
                     selectedItemUuid = null;
                 }
+                window.hideTooltip();
+                refreshInventoryInterface();
+                return;
             }
-            refreshInventoryInterface();
-            return;
         }
 
-        // Case 2: No Selection -> Select Item or Show Menu
+        // 2. 選択されていない場合、新規選択またはメニュー表示
         if (uuid) {
             audioManager.play('CLICK');
+            const item = [...engineState.inventory, ...engineState.equippedGems, ...engineState.altGems, engineState.equippedArtifacts.RING, engineState.equippedArtifacts.AMULET]
+                          .find(i => i && i.uuid === uuid);
+
             if (type === 'SLOT') {
-                // Show Unequip Menu
-                showActionMenu(e.clientX, e.clientY, uuid);
+                // 装備スロットの場合は「外す」メニューを表示
+                showActionMenu((e.touches ? e.touches[0].clientX : e.clientX), (e.touches ? e.touches[0].clientY : e.clientY), uuid);
+                if (item) window.showTooltip(e, item);
             } else {
-                // Select Inventory Item
+                // インベントリの場合は選択状態にする
                 selectedItemUuid = uuid;
-                refreshInventoryInterface(); // Redraw to show highlight
+                if (item) window.showTooltip(e, item);
+                refreshInventoryInterface();
             }
         }
     };

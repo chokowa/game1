@@ -10,16 +10,27 @@
         /* --- Quick Buy Buttons --- */
         .quick-buy-container {
             position: absolute;
-            top: 705px; /* 砲台の土台(720px)の高さに合わせる */
+            top: 700px; /* 砲台の少し上 */
             display: flex;
-            flex-direction: row; /* 水平に並べる */
-            gap: 12px;
+            flex-direction: row;
+            gap: 10px;
             z-index: 45;
             pointer-events: none;
+            /* 中央基準で配置 */
+            left: 50%;
+            transform: translateX(-50%);
+            width: auto;
+            justify-content: center;
         }
-        /* 砲台(中心300px)の左右に適切に配置 */
-        #quick-buy-left { right: 350px; } 
-        #quick-buy-right { left: 350px; }
+        /* 砲台を挟んで左右に40pxずらす */
+        #quick-buy-left { margin-left: -155px; } 
+        #quick-buy-right { margin-left: 155px; }
+
+        /* タッチターゲットを最小44px以上に確保（iOS/Android推奨） */
+        .quick-btn, .hud-btn, .side-hud-btn, .inv-item, .gem-slot {
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
+        }
 
         .quick-btn {
             width: 44px; height: 44px; /* サイズをコンパクトに */
@@ -79,8 +90,9 @@
         #game-canvas { 
             width: 100%; height: 100%; 
             flex-grow: 1; display: block; 
-            /* キャンバスの描画サイズと表示サイズを一致させるための指定 */
             object-fit: contain;
+            /* キャンバス上でのスクロールやズームを禁止 */
+            touch-action: none;
         }
 
         /* --- PoE Style HUD (Bottom Panel) --- */
