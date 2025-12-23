@@ -10,7 +10,8 @@
         /* --- Quick Buy Buttons --- */
         .quick-buy-container {
             position: absolute;
-            top: 75%; /* 675px -> 75%: 画面サイズに応じて可変配置 */
+            /* top: 75% から bottom基準に変更し、画面サイズが変わってもHUDの上に配置されるように修正 */
+            bottom: 160px;
             display: flex;
             flex-direction: row;
             gap: 8px;
@@ -99,12 +100,21 @@
         /* --- Mobile Optimization --- */
         @media (max-width: 600px) {
             #device-frame {
-                border: none;       /* ボーダー削除で隙間の違和感を軽減 */
-                box-shadow: none;   /* シャドウ削除 */
-                max-height: 100%;   /* 100dvhだとアドレスバーの影響を受ける場合があるため100%も併用検討 */
+                border: none;
+                box-shadow: none;
+                max-height: 100%;
+                /* アスペクト比固定を解除し、画面全体を使用するよう変更 */
+                aspect-ratio: unset;
+                width: 100%;
+                height: 100%;
+                border-radius: 0;
             }
             body {
-                background: #0b0c10; /* ゲーム背景色に合わせて隙間を目立たなくする */
+                background: #0b0c10;
+            }
+            /* モバイルでのボタン位置微調整 */
+            .quick-buy-container {
+                bottom: 180px;
             }
         }
 
