@@ -318,8 +318,8 @@ export function updateCrewHud() {
     if (!container) {
         container = document.createElement('div');
         container.id = 'crew-hud';
-        // [Patch] Bottom offset increased (200px -> 250px) to prevent overlap with Pause button on mobile
-        container.style.cssText = "position:absolute; bottom:250px; right:10px; display:flex; flex-direction:column; gap:10px; z-index:45;";
+        // [Patch] Position optimized using calc/env to stack neatly above the pause button
+        container.style.cssText = "position:absolute; bottom:calc(185px + env(safe-area-inset-bottom)); right:10px; display:flex; flex-direction:column; gap:10px; z-index:45;";
         document.getElementById('device-frame').appendChild(container);
     }
 
