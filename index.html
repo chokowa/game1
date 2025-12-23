@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>Project OVERLORD: Vertical Ops</title>
     <script src="https://unpkg.com/blockly/blockly.min.js"></script>
     <script src="https://unpkg.com/blockly/javascript_compressed.js"></script>
@@ -18,7 +18,7 @@
         }
 
         body, html { 
-            margin: 0; padding: 0; height: 100vh; width: 100vw;
+            margin: 0; padding: 0; width: 100%; height: 100%;
             background: #000; color: var(--text-main); 
             font-family: 'Hiragino Kaku Gothic Pro', 'Meiryo', sans-serif; 
             overflow: hidden; user-select: none;
@@ -27,7 +27,12 @@
 
         #device-frame {
             position: relative;
-            width: 100%; height: 100%; max-width: 600px; max-height: 900px;
+            /* アスペクト比を維持 (600:900 = 2:3) */
+            aspect-ratio: 2 / 3;
+            /* 画面内に収まるように自動調整 */
+            width: auto; height: auto;
+            max-width: 100%; max-height: 100dvh;
+
             background: radial-gradient(circle at 50% 80%, #2c3e50 0%, #000000 100%);
             border: 2px solid #333;
             box-shadow: 0 0 50px rgba(0,0,0,0.8);
@@ -38,15 +43,22 @@
         #game-canvas { 
             width: 100%; height: 100%; 
             flex-grow: 1; display: block; 
+            /* キャンバスの描画サイズと表示サイズを一致させるための指定 */
+            object-fit: contain;
         }
 
         /* --- PoE Style HUD (Bottom Panel) --- */
         #bottom-hud {
-            position: absolute; bottom: 0; left: 0; width: 100%; height: 140px;
+            position: absolute; bottom: 0; left: 0; width: 100%; 
+            /* セーフエリア分高さを確保 */
+            height: calc(140px + env(safe-area-inset-bottom));
             background: linear-gradient(to top, #0b0c10 80%, transparent 100%);
             display: flex; justify-content: space-between; align-items: flex-end;
-            padding-bottom: 10px; z-index: 50;
+            /* セーフエリア分余白を追加 */
+            padding-bottom: calc(10px + env(safe-area-inset-bottom)); 
+            z-index: 50;
             pointer-events: none; /* 下のレイヤーをクリック可能に */
+            box-sizing: border-box;
         }
 
         /* Orbs (HP / Energy) */
