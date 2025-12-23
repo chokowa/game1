@@ -280,21 +280,30 @@ export function updateArtifactHud() {
     window.engineState.artifacts.forEach(art => {
         const icon = document.createElement('div');
         icon.innerHTML = `<div style="pointer-events:none;">${art.icon}</div>`;
-        // [Patch] サイズを拡大(32->40px)してタッチしやすく変更
-        icon.style.cssText = `width:40px; height:40px; background:rgba(0,0,0,0.6); border:1px solid ${art.color}; border-radius:4px; text-align:center; line-height:38px; font-size:22px; cursor:help; display:flex; align-items:center; justify-content:center; touch-action:none;`;
+        icon.style.cssText = `width:40px; height:40px; background:rgba(0,0,0,0.6); border:1px solid ${art.color}; border-radius:4px; text-align:center; line-height:38px; font-size:22px; cursor:help; display:flex; align-items:center; justify-content:center; touch-action:none; pointer-events:auto;`;
+
+        const showInfo = (e) => {
+            e.stopPropagation(); // ゲーム画面へのイベント伝播を阻止
+            // タッチイベントの場合は座標を取り出す
+            const ptr = (e.touches && e.touches[0]) ? e.touches[0] : e;
+            window.showTooltip(ptr, art);
+        };
 
         // PC hover
-        icon.onmouseenter = (e) => window.showTooltip(e, art);
-        icon.onmousemove = (e) => window.moveTooltip(e);
+        icon.onmouseenter = showInfo;
+        icon.onmousemove = (e) => { e.stopPropagation(); window.moveTooltip(e); };
         icon.onmouseleave = window.hideTooltip;
 
-        // Mobile touch (タップ感度改善)
+        // Mobile / Click
+        // タッチ開始時に確実に表示し、伝播を止める
         icon.ontouchstart = (e) => {
-            // スクロール等のデフォルト動作を防いで確実に反応させる
             if (e.cancelable) e.preventDefault();
-            window.showTooltip(e.touches[0], art);
+            showInfo(e);
         };
-        // タッチ終了時ではなく、少し遅らせて消すか、別の場所タップで消えるようにする（hideTooltipの既存タイマーに任せる）
+        // クリックでも表示（マウス操作や一部タッチ環境用）
+        icon.onclick = (e) => {
+            showInfo(e);
+        };
 
         container.appendChild(icon);
     });
@@ -313,108 +322,110 @@ export function updateCrewHud() {
         document.getElementById('device-frame').appendChild(container);
     }
 
-    // クルーの状態（CD、活性化、表情）を文字列化して比較
-    const currentStatus = engineState.selectedCrew.map(id => {
-        const cd = Math.ceil((engineState.crewCooldowns[id] || 0) / 60);
-        const active = (engineState.crewActiveBuffs[id] || 0) > 0 ? '1' : '0';
-        return `${id}-${cd}-${active}-${engineState.crewStatusSuffix}`;
-    }).join('|');
-
-    // 状態に変更がないならDOMをいじらない
-    if (container.dataset.lastStatus === currentStatus) return;
-    container.dataset.lastStatus = currentStatus;
-
-    container.innerHTML = '';
+    // [Patch] Differential Update Strategy (DOMの全削除再生成を廃止)
+    // 既存の要素を取得し、パラメータのみを更新することでイベントリスナーの外れやレイアウト計算負荷を防ぐ
 
     engineState.selectedCrew.forEach(crewId => {
         const crew = CREW_DATA[crewId];
         if (!crew) return;
 
-        // Cooldown Logic
+        // ユニークIDでラッパー要素を取得
+        let wrapper = document.getElementById(`crew-icon-${crewId}`);
+
+        // --- 初回生成 ---
+        if (!wrapper) {
+            wrapper = document.createElement('div');
+            wrapper.id = `crew-icon-${crewId}`;
+            wrapper.style.cssText = `
+                width: 48px; height: 48px; background: #000; 
+                border: 2px solid #444; border-radius: 4px; 
+                overflow: hidden; position: relative;
+                transition: border-color 0.2s, box-shadow 0.2s;
+                cursor: pointer; pointer-events: auto; touch-action: manipulation;
+            `;
+
+            // Activate Event
+            wrapper.onpointerdown = (e) => {
+                e.preventDefault(); e.stopPropagation();
+                // 状態はengineStateから直接判定
+                const cd = window.engineState.crewCooldowns[crewId] || 0;
+                if (cd <= 0) window.engineState.activateCrewAbility(crewId);
+                else window.showToast("リチャージ中...", "#7f8c8d");
+            };
+
+            // Image
+            const img = document.createElement('img');
+            img.className = 'crew-face-img';
+            img.style.cssText = "width:100%; height:100%; image-rendering:pixelated; pointer-events:none; display:block;";
+            wrapper.appendChild(img);
+
+            // CD Overlay (Mask)
+            const cdOverlay = document.createElement('div');
+            cdOverlay.className = 'crew-cd-overlay';
+            cdOverlay.style.cssText = "position:absolute; bottom:0; left:0; width:100%; height:0%; background:rgba(0,0,0,0.7); pointer-events:none; transition:height 0.1s linear;";
+            wrapper.appendChild(cdOverlay);
+
+            // Timer Text
+            const timer = document.createElement('div');
+            timer.className = 'crew-cd-timer';
+            timer.style.cssText = "position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); color:#fff; font-size:14px; font-weight:bold; text-shadow:0 0 2px #000; display:none;";
+            wrapper.appendChild(timer);
+
+            // Active Buff Overlay
+            const buffOverlay = document.createElement('div');
+            buffOverlay.className = 'crew-buff-overlay';
+            buffOverlay.style.cssText = "position:absolute; top:0; left:0; width:100%; height:100%; border:2px solid rgba(0,210,211,0.5); box-sizing:border-box; display:none; animation: pulse 0.5s infinite alternate;";
+            wrapper.appendChild(buffOverlay);
+
+            container.appendChild(wrapper);
+        }
+
+        // --- 差分更新 ---
         const currentCd = engineState.crewCooldowns[crewId] || 0;
         const maxCd = crew.ability ? crew.ability.cd : 1;
         const isReady = currentCd <= 0;
-
-        // Active Buff Logic
         const isActive = (engineState.crewActiveBuffs[crewId] || 0) > 0;
 
-        const wrapper = document.createElement('div');
+        // 1. スタイル更新
         const borderColor = isActive ? '#00d2d3' : (engineState.isBossWave ? '#e74c3c' : '#444');
         const shadow = isActive ? '0 0 15px #00d2d3' : (engineState.isBossWave ? '0 0 15px red' : '0 0 5px #000');
 
-        wrapper.style.cssText = `
-            width: 48px; height: 48px; 
-            background: #000; 
-            border: 2px solid ${borderColor}; 
-            border-radius: 4px; 
-            overflow: hidden; 
-            position: relative;
-            box-shadow: ${shadow};
-            transition: all 0.2s;
-            cursor: ${isReady ? 'pointer' : 'default'};
-            pointer-events: auto;
-        `;
+        wrapper.style.borderColor = borderColor;
+        wrapper.style.boxShadow = shadow;
+        wrapper.style.cursor = isReady ? 'pointer' : 'default';
 
-        // Activate (pointerdown: click/touchを統一して確実に拾う)
-        wrapper.style.touchAction = 'manipulation';
-        wrapper.onpointerdown = (e) => {
-            // canvas等の背面がイベントを取るケースを潰す
-            e.preventDefault();
-            e.stopPropagation();
+        // 2. 画像更新 (表情変化)
+        const img = wrapper.querySelector('.crew-face-img');
+        const desiredSrc = `${crew.imgBase}${engineState.crewStatusSuffix}.png`;
+        if (img && !img.src.endsWith(desiredSrc)) {
+            img.src = desiredSrc;
+        }
+        // ダメージ時の振動
+        if (engineState.crewStatusSuffix === 'b') {
+            wrapper.style.transform = `translate(${(Math.random()-0.5)*5}px, ${(Math.random()-0.5)*5}px)`;
+        } else {
+            wrapper.style.transform = 'none';
+        }
 
-            if (isReady) {
-                engineState.activateCrewAbility(crewId);
-            } else {
-                window.showToast("リチャージ中...", "#7f8c8d");
-            }
-        };
+        // 3. CDオーバーレイ更新
+        const cdOverlay = wrapper.querySelector('.crew-cd-overlay');
+        const pct = isReady ? 0 : (currentCd / maxCd) * 100;
+        if (cdOverlay) cdOverlay.style.height = `${pct}%`;
 
-        const imgSrc = `${crew.imgBase}${engineState.crewStatusSuffix}.png`;
-        const img = document.createElement('img');
-        img.src = imgSrc;
-        img.style.width = '100%';
-        img.style.height = '100%';
-        img.style.imageRendering = 'pixelated';
-        img.style.pointerEvents = 'none';
-
-        if (engineState.crewStatusSuffix === 'c') img.style.animation = 'pulse 1s infinite';
-        if (engineState.crewStatusSuffix === 'b') wrapper.style.transform = `translate(${(Math.random()-0.5)*5}px, ${(Math.random()-0.5)*5}px)`;
-
-        wrapper.appendChild(img);
-
-        // Cooldown Overlay (Dark mask)
-        if (!isReady) {
-            const cdOverlay = document.createElement('div');
-            const pct = (currentCd / maxCd) * 100;
-            cdOverlay.style.cssText = `
-                position: absolute; bottom: 0; left: 0; width: 100%; 
-                height: ${pct}%; 
-                background: rgba(0,0,0,0.7);
-                pointer-events: none;
-                transition: height 0.1s linear;
-            `;
-            wrapper.appendChild(cdOverlay);
-
-            // Timer Text (if long)
+        // 4. タイマーテキスト
+        const timer = wrapper.querySelector('.crew-cd-timer');
+        if (timer) {
             if (currentCd > 60) {
-                const timer = document.createElement('div');
+                timer.style.display = 'block';
                 timer.innerText = Math.ceil(currentCd / 60);
-                timer.style.cssText = "position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); color:#fff; font-size:14px; font-weight:bold; text-shadow:0 0 2px #000;";
-                wrapper.appendChild(timer);
+            } else {
+                timer.style.display = 'none';
             }
         }
 
-        // Active Duration Overlay (Green ring or similar)
-        if (isActive) {
-             const buffOverlay = document.createElement('div');
-             buffOverlay.style.cssText = "position:absolute; top:0; left:0; width:100%; height:100%; border:2px solid rgba(0,210,211,0.5); box-sizing:border-box; animation: pulse 0.5s infinite alternate;";
-             wrapper.appendChild(buffOverlay);
-        }
-
-        // [Patch] Tooltip removed from HUD to prevent sticking on mobile
-        // (Displayed only in Crew Selection / Equipment menu)
-
-        container.appendChild(wrapper);
+        // 5. Active Overlay
+        const buffOverlay = wrapper.querySelector('.crew-buff-overlay');
+        if (buffOverlay) buffOverlay.style.display = isActive ? 'block' : 'none';
     });
 }
 window.updateCrewHud = updateCrewHud;
@@ -741,11 +752,18 @@ export function refreshInventoryInterface() {
             const crew = CREW_DATA[crewId];
             if (!crew) return;
             const el = document.createElement('div');
-            el.style.cssText = "flex:1; display:flex; gap:4px; align-items:center; background:rgba(255,255,255,0.05); padding:4px; border:1px solid #555; border-radius:4px;";
+            // [Patch] Detailed Crew Info
+            el.style.cssText = "flex:1; display:flex; gap:6px; align-items:center; background:rgba(255,255,255,0.08); padding:6px; border:1px solid #555; border-radius:4px;";
+
+            // Ability Desc Construction
+            const abilityText = crew.ability ? `${crew.ability.name}: ${crew.ability.desc}` : 'No Ability';
+
             el.innerHTML = `
-                <img src="${crew.imgBase}a.png" style="width:24px; height:24px; border-radius:4px; image-rendering:pixelated; border:1px solid #777; flex-shrink:0;">
-                <div style="flex:1; overflow:hidden;">
-                    <div style="font-size:10px; font-weight:bold; color:#f1c40f; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${crew.name}</div>
+                <img src="${crew.imgBase}a.png" style="width:32px; height:32px; border-radius:4px; image-rendering:pixelated; border:1px solid #777; flex-shrink:0;">
+                <div style="flex:1; overflow:hidden; display:flex; flex-direction:column; justify-content:center;">
+                    <div style="font-size:11px; font-weight:bold; color:#f1c40f; line-height:1.2;">${crew.name} <span style="font-size:9px; color:#aaa; font-weight:normal;">(${crew.job})</span></div>
+                    <div style="font-size:9px; color:#fff; line-height:1.2; margin-top:1px;">P: ${crew.desc}</div>
+                    <div style="font-size:9px; color:#00d2d3; line-height:1.2;">A: ${abilityText}</div>
                 </div>
             `;
             crewRow.appendChild(el);
