@@ -280,17 +280,21 @@ export function updateArtifactHud() {
     window.engineState.artifacts.forEach(art => {
         const icon = document.createElement('div');
         icon.innerHTML = `<div style="pointer-events:none;">${art.icon}</div>`;
-        icon.style.cssText = `width:32px; height:32px; background:rgba(0,0,0,0.6); border:1px solid ${art.color}; border-radius:4px; text-align:center; line-height:30px; font-size:18px; cursor:help; display:flex; align-items:center; justify-content:center; touch-action:none;`;
+        // [Patch] サイズを拡大(32->40px)してタッチしやすく変更
+        icon.style.cssText = `width:40px; height:40px; background:rgba(0,0,0,0.6); border:1px solid ${art.color}; border-radius:4px; text-align:center; line-height:38px; font-size:22px; cursor:help; display:flex; align-items:center; justify-content:center; touch-action:none;`;
 
         // PC hover
         icon.onmouseenter = (e) => window.showTooltip(e, art);
         icon.onmousemove = (e) => window.moveTooltip(e);
         icon.onmouseleave = window.hideTooltip;
 
-        // Mobile touch (タップで表示、離して数秒で消える既存ロジックを利用)
+        // Mobile touch (タップ感度改善)
         icon.ontouchstart = (e) => {
+            // スクロール等のデフォルト動作を防いで確実に反応させる
+            if (e.cancelable) e.preventDefault();
             window.showTooltip(e.touches[0], art);
         };
+        // タッチ終了時ではなく、少し遅らせて消すか、別の場所タップで消えるようにする（hideTooltipの既存タイマーに任せる）
 
         container.appendChild(icon);
     });
@@ -407,21 +411,8 @@ export function updateCrewHud() {
              wrapper.appendChild(buffOverlay);
         }
 
-        // Tooltip
-        const abilityInfo = crew.ability ? `\n[Skill] ${crew.ability.name}\n${crew.ability.desc}` : '';
-        const tooltipData = { name: crew.name, desc: crew.job + abilityInfo, color: isReady ? '#fff' : '#aaa' };
-
-        wrapper.onmouseenter = (e) => window.showTooltip(e, tooltipData);
-        wrapper.onmousemove = (e) => window.moveTooltip(e);
-        wrapper.onmouseleave = window.hideTooltip;
-
-        // Mobile touch support
-        wrapper.ontouchstart = (e) => {
-            // pointerdownとイベントが重複しないよう注意が必要な場合があるが、ここでは表示のみ
-            window.showTooltip(e.touches[0], tooltipData);
-        };
-        wrapper.ontouchend = window.hideTooltip;
-        wrapper.ontouchcancel = window.hideTooltip;
+        // [Patch] Tooltip removed from HUD to prevent sticking on mobile
+        // (Displayed only in Crew Selection / Equipment menu)
 
         container.appendChild(wrapper);
     });

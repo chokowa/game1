@@ -18,14 +18,14 @@
             z-index: 100; /* 最前面に確実に表示 */
             pointer-events: none;
         }
-        /* 砲台(300px)を中心に左右に振り分け */
+        /* 砲台を中心に左右に振り分け（中央寄せ配置に修正） */
         #quick-buy-left { 
             right: 50%; 
-            margin-right: 60px; /* 砲台の左側に寄せる */
+            margin-right: 35px; /* 砲台の直下に収まるよう間隔を縮小 */
         } 
         #quick-buy-right { 
             left: 50%; 
-            margin-left: 60px; /* 砲台の右側に寄せる */
+            margin-left: 35px; /* 砲台の直下に収まるよう間隔を縮小 */
         }
 
         /* タッチターゲットを最小44px以上に確保（iOS/Android推奨） */
@@ -35,7 +35,7 @@
         }
 
         .quick-btn {
-            width: 44px; height: 44px; /* サイズをコンパクトに */
+            width: 36px; height: 36px; /* クルーアイコンと被らないようサイズを縮小 */
             background: rgba(11, 12, 16, 0.85);
             border: 1px solid var(--accent-cyan);
             border-radius: 50%;
@@ -45,7 +45,7 @@
             cursor: pointer;
             pointer-events: auto;
             transition: 0.2s;
-            box-shadow: 0 0 12px rgba(102, 252, 241, 0.2);
+            box-shadow: 0 0 8px rgba(102, 252, 241, 0.2);
             position: relative;
         }
         .quick-btn:active { transform: scale(0.9); }
@@ -54,7 +54,7 @@
             border-color: #555;
             cursor: not-allowed;
         }
-        .quick-btn .icon { font-size: 22px; } /* アイコンを少しだけ大きく */
+        .quick-btn .icon { font-size: 18px; } /* アイコンサイズも調整 */
 
         :root {
             --bg-color: #0b0c10;
@@ -112,9 +112,9 @@
             body {
                 background: #0b0c10;
             }
-            /* モバイルでのボタン位置微調整 */
+            /* モバイルでのボタン位置微調整：砲台の下、HUDの上に配置 */
             .quick-buy-container {
-                bottom: 180px;
+                bottom: 135px;
             }
         }
 
