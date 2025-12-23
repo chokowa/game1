@@ -3,9 +3,10 @@
  * 変更点: モジュール分割によるリファクタリング (Utils, Effects, UI分離)
  * 憲法準拠: 1文字変数禁止、型ヒント必須、定数管理徹底。
  */
-import { GAME_SETTINGS, GEMS, GEM_TYPES, ARTIFACTS, ARTIFACT_TYPES, BOSS_ARTIFACTS, MISC_ITEMS, UNIQUES, SHOP_ITEMS, ENEMY_TIERS, STAGE_CONFIG, BOSS_WAVES, UI_STRINGS, CREW_DATA } from './constants.js';
-import { generateUuid, createItemInstance } from './utils.js';
-import { FloatingText, ParticleEffect } from './effects.js';
+import { GAME_SETTINGS, GEMS, GEM_TYPES, ARTIFACTS, ARTIFACT_TYPES, BOSS_ARTIFACTS, MISC_ITEMS, UNIQUES, SHOP_ITEMS, ENEMY_TIERS, STAGE_CONFIG, BOSS_WAVES, UI_STRINGS, CREW_DATA, EFFECT_CONSTANTS } from './constants.js';
+import { generateUuid, createItemInstance, loadGameAssets, GAME_ASSETS } from './utils.js';
+import { FloatingText, ParticleEffect, ShockwaveEffect, StarField } from './effects.js';
+import { audioManager } from './audio-manager.js';
 import { refreshInventoryInterface, updateMainScreenLoadout, updateHudDisplay, refreshShopInterface } from './ui.js';
 
 /** ゲーム内描画・計算用定数 */
@@ -18,33 +19,6 @@ const RENDER_CONSTANTS = {
     DROP_SIZE: 24,          
     DROP_FLOAT_SPEED: 0.05, 
     DROP_FLOAT_RANGE: 5     
-};
-
-/** 演出・スキル効果用定数 */
-const EFFECT_CONSTANTS = {
-    PARTICLE_COUNT: 8,
-    BASE_CRIT_CHANCE: 0.05,
-    BASE_CRIT_MULTIPLIER: 1.5,
-    
-    BURN_DURATION: 180,
-    BURN_TICK_RATE: 30,
-    BURN_DAMAGE_RATIO: 0.2,
-
-    NOVA_RADIUS: 120,
-    FIREBALL_RADIUS: 100, 
-    FREEZE_CHANCE: 0.4,
-    FREEZE_DURATION: 120,
-    SHATTER_PROJECTILE_COUNT: 12,
-    SHATTER_SPEED: 12,
-    MULTISHOT_SPREAD_ANGLE: 0.26, 
-    
-    COLOR_CRIT: "#f1c40f",
-    COLOR_NORMAL: "#ffffff",
-    COLOR_BURN: "#e67e22",
-    COLOR_FREEZE: "#74b9ff",
-    COLOR_LEVELUP: "#00d2d3",
-    COLOR_TARGET: "#ff0000",
-    COLOR_CHAIN: "#f39c12"
 };
 
 /** 内部ロジック用定数 */
@@ -95,7 +69,7 @@ class DropItem {
         
         let icon = "?";
         if (this.itemTemplate.type === GEM_TYPES.ACTIVE) icon = "⚔️";
-        else if (this.itemTemplate.type === GEM_TYPES.SUPPORT) icon = "💎";
+        else if (this.itemTemplate.type === GEM_TYPES.SUPPORT) icon = "💠";
         else if (this.itemTemplate.type === ARTIFACT_TYPES.RING) icon = "💍";
         else if (this.itemTemplate.type === ARTIFACT_TYPES.AMULET) icon = "🧿";
         else if (this.itemTemplate.type === 'GOLD') icon = "💰";
@@ -119,7 +93,7 @@ class GameEngine {
         this.currentStageIndex = 0;
         this.currentWaveNumber = 1;
         this.waveProgress = 0;      
-        this.waveQuota = 10;
+        this.waveQuota = 40; // 10 -> 40: Wave 1のプレイ時間を約1分半に延長
         this.isBossWave = false;
         this.gold = 0;
 
@@ -162,6 +136,38 @@ class GameEngine {
         this.crewCooldowns = {};   // { crewId: framesRemaining }
         this.crewActiveBuffs = {}; // { crewId: framesRemaining }
         this.bonusStats = {};      // Permanent stats from Level Up choices
+
+        // [Patch] Game Speed Control
+        this.timeScale = 0.7; // Default 0.7 (Slow)
+        this.speedLevel = 0;  // 0: x0.7, 1: x1.0, 2: x2.0
+        this.accumulator = 0;
+
+        // [Stats for Results]
+        this.startTime = Date.now();
+        this.damageLog = {}; // { sourceId: totalDamage }
+        this.waveLog = [{ wave: 1, time: 0 }]; // { wave, time }
+        this.hitStopFrames = 0; // ヒットストップ用カウンタ
+    }
+
+    recordDamage(sourceId, amount) {
+        if (!sourceId) return;
+        if (!this.damageLog[sourceId]) this.damageLog[sourceId] = 0;
+        this.damageLog[sourceId] += amount;
+    }
+
+    toggleGameSpeed() {
+        this.speedLevel = (this.speedLevel + 1) % 3;
+        if (this.speedLevel === 0) this.timeScale = 0.7;
+        else if (this.speedLevel === 1) this.timeScale = 1.0;
+        else if (this.speedLevel === 2) this.timeScale = 2.0;
+
+        const btn = document.getElementById('speed-btn');
+        if (btn) {
+            // Internal 0.7 -> Display x1.0 (Base)
+            // Internal 1.0 -> Display x1.5
+            // Internal 2.0 -> Display x3.0
+            btn.innerHTML = this.speedLevel === 0 ? "▶️ x1.0" : (this.speedLevel === 1 ? "⏩️ x1.5" : "⏩️⏩️ x3.0");
+        }
     }
 
     reset() {
@@ -178,7 +184,7 @@ class GameEngine {
         this.currentStageIndex = 0;
         this.currentWaveNumber = 1;
         this.waveProgress = 0;
-        this.waveQuota = 10;
+        this.waveQuota = 40;
         this.isBossWave = false;
         this.gold = 0;
         
@@ -200,7 +206,15 @@ class GameEngine {
         this.activeDrops = [];
         this.activeSupportUnits = [];
         activeZoneEffects = [];
+        activeShockwaves = [];
         this.manualTargetId = null;
+
+        // Reset speed logic (keep setting or reset? defaulting to reset for safety)
+        this.timeScale = 0.7;
+        this.speedLevel = 0;
+        this.accumulator = 0;
+        const btn = document.getElementById('speed-btn');
+        if (btn) btn.innerHTML = "▶️ x1.0";
     }
 
     /** スキルツリーのステータス再計算 (Rank System対応) */
@@ -254,7 +268,8 @@ Object.assign(GameEngine.prototype, {
             final_damage_mul: 0, self_damage_pct: 0,
             hit_damage_mul_pct: 0, dot_power_pct: 0,
             chain_count: 0, shield_bash_mul: 0, mp_regen_pct: 0, // Artifact stats
-            hp_regen: 0 // Crew stats
+            hp_regen: 0, // Crew stats
+            damage_taken_mul: 0
         };
 
         // Bonus Stats (Level Up Fillers)
@@ -537,7 +552,10 @@ Object.assign(GameEngine.prototype, {
         this.inventory.splice(index, 1);
 
         const base = GAME_SETTINGS.SELL_PRICE_BASE || 50;
-        const price = base * item.level;
+        let price = base * item.level;
+
+        // Artifact: Midas Bag (Sell price x2)
+        if (this.artifacts.some(a => a.id === 'midas_bag')) price *= 2;
 
         this.gold += price;
 
@@ -609,12 +627,11 @@ Object.assign(GameEngine.prototype, {
                     }
 
                     fusionOccurred = true;
-                    activeFloatingTexts.push(new FloatingText(
-                        GAME_SETTINGS.SCREEN_WIDTH/2, 
-                        GAME_SETTINGS.SCREEN_HEIGHT/2 - 50, 
-                        `FUSE: ${baseItem.name} Lv.${nextLevel}`, 
-                        EFFECT_CONSTANTS.COLOR_LEVELUP, 30
-                    ));
+                    // バナー演出の呼び出し
+                    if (window.showFuseEffect) window.showFuseEffect(newItem);
+                    // レベルアップ音を鳴らす（控えめなSEにするのが理想ですが、現状の流用）
+                    audioManager.play('LEVELUP');
+
                     break;
                 }
             }
@@ -687,7 +704,8 @@ Object.assign(GameEngine.prototype, {
     checkProgression(killedEnemy) {
         if (this.isBossWave) {
             if (killedEnemy.tier.id === 'BOSS') {
-                const remainingBosses = activeEnemies.filter(e => e.isActive && e.tier.id === 'BOSS' && e.id !== killedEnemy.id);
+                // 修正点: isActive かつ 「死亡演出中(isDying)ではない」ボスをカウントする
+                const remainingBosses = activeEnemies.filter(e => e.isActive && !e.isDying && e.tier.id === 'BOSS' && e.id !== killedEnemy.id);
                 if (remainingBosses.length === 0) {
                     this.completeWaveOrGame();
                 }
@@ -737,7 +755,15 @@ Object.assign(GameEngine.prototype, {
 
         if (this.currentWaveNumber >= 10) {
             this.isGameOver = true;
-            activeFloatingTexts.push(new FloatingText(GAME_SETTINGS.SCREEN_WIDTH/2, GAME_SETTINGS.SCREEN_HEIGHT/2 + 60, "全ミッション完了！", "#2ecc71", 50));
+            // Record final timestamp
+            this.waveLog.push({ wave: "CLEAR", time: (Date.now() - this.startTime) / 1000 });
+
+            // Show Result Screen instead of Game Over
+            if (window.showGameClearScreen) {
+                setTimeout(() => window.showGameClearScreen(), 2000);
+            } else {
+                activeFloatingTexts.push(new FloatingText(GAME_SETTINGS.SCREEN_WIDTH/2, GAME_SETTINGS.SCREEN_HEIGHT/2 + 60, "全ミッション完了！", "#2ecc71", 50));
+            }
             return;
         }
 
@@ -745,8 +771,19 @@ Object.assign(GameEngine.prototype, {
         if (window.showArtifactSelection) setTimeout(() => window.showArtifactSelection(), 1500);
 
         this.currentWaveNumber++;
+
+        // BGM Change at Wave 8
+        if (this.currentWaveNumber === 8) {
+            audioManager.playBgm('BGM_LATE');
+            activeFloatingTexts.push(new FloatingText(GAME_SETTINGS.SCREEN_WIDTH/2, 200, "♫ BGM CHANGED ♫", "#f1c40f", 20));
+        }
+
+        // Log Wave time
+        this.waveLog.push({ wave: this.currentWaveNumber, time: (Date.now() - this.startTime) / 1000 });
+
         this.waveProgress = 0;
-        this.waveQuota = Math.floor(15 + (this.currentWaveNumber * 3));
+        // 増加量を調整 (3 -> 12): 後半に向けてWaveが徐々に長く重厚になるように
+        this.waveQuota = Math.floor(30 + (this.currentWaveNumber * 12));
         this.isBossWave = false;
         this.baseIntegrity = Math.min(this.baseIntegrity + 200, GAME_SETTINGS.BASE_MAX_HP + this.stats.hp_max);
         refreshInventoryInterface();
@@ -787,6 +824,7 @@ Object.assign(GameEngine.prototype, {
             this.purchasedShopItems.push(item.id);
             activeFloatingTexts.push(new FloatingText(GAME_SETTINGS.SCREEN_WIDTH/2, GAME_SETTINGS.SCREEN_HEIGHT/2, `${item.name} PURCHASED`, "#2ecc71", 24));
             if (shopMsg) { shopMsg.style.color = "#2ecc71"; shopMsg.innerText = `${item.name} ACQUIRED`; }
+            audioManager.play('CLICK');
         }
         else if (item.id === 'repair') {
             this.repairCastle(); 
@@ -905,6 +943,18 @@ Object.assign(GameEngine.prototype, {
         const crew = CREW_DATA[crewId];
         if (!crew || !crew.ability) return;
 
+        // Artifact: Wolf Radio (Ability Duration +50%)
+        let durationBonus = 1.0;
+        if (this.artifacts.some(a => a.id === 'wolf_radio')) durationBonus = 1.5;
+
+        // アーケード演出: カットインの呼び出し
+        if (!crew || !crew.ability) return;
+
+        // アーケード演出: カットインの呼び出し
+        if (window.showAbilityCutIn) {
+            window.showAbilityCutIn(crewId);
+        }
+
         const ability = crew.ability;
         this.crewCooldowns[crewId] = ability.cd;
 
@@ -915,7 +965,7 @@ Object.assign(GameEngine.prototype, {
         // Apply Effect
         if (crew.id === 1 || crew.id === 2) {
             // Buff type (Wolf, Luna)
-            this.crewActiveBuffs[crewId] = ability.duration;
+            this.crewActiveBuffs[crewId] = Math.floor(ability.duration * durationBonus);
             this.recalcStats();
             // Particle Aura
             const color = crew.id === 1 ? "#e74c3c" : "#f1c40f";
@@ -983,17 +1033,19 @@ let activeEnemies = [];
 let activeProjectiles = [];
 let activeEnemyProjectiles = []; 
 let activeParticles = [];
+let activeShockwaves = [];
 let activeFloatingTexts = [];
 let activeZoneEffects = []; 
+let starField = new StarField(GAME_SETTINGS.SCREEN_WIDTH, GAME_SETTINGS.SCREEN_HEIGHT);
 
 // [Patch] Inject All Elemental Gems
 if (!GEMS.POISON) {
-    GEMS.POISON = { id: 'poison', name: 'Venom', type: 'ACTIVE', color: '#8e44ad', damage: 15, rate: 100, speed: 3.5, forcedLevel: 1 };
-    GEMS.PSYCHIC = { id: 'psychic', name: 'Mindbend', type: 'ACTIVE', color: '#e056fd', damage: 10, rate: 45, speed: 7, forcedLevel: 1 };
-    GEMS.WATER   = { id: 'water',   name: 'Tidal',    type: 'ACTIVE', color: '#3498db', damage: 20, rate: 30, speed: 9, forcedLevel: 1 };
-    GEMS.ELECTRIC= { id: 'electric',name: 'Volt',     type: 'ACTIVE', color: '#f1c40f', damage: 12, rate: 20, speed: 20, forcedLevel: 1, chain_count: 3, chain_range: 250 };
-    GEMS.ROCK    = { id: 'rock',    name: 'Meteor',   type: 'ACTIVE', color: '#7f8c8d', damage: 60, rate: 120, speed: 8, forcedLevel: 1 };
-    GEMS.PLANT   = { id: 'plant',   name: 'Thorn',    type: 'ACTIVE', color: '#2ecc71', damage: 18, rate: 40, speed: 8, forcedLevel: 1, pierce_count: 2 };
+    GEMS.POISON = { id: 'poison', name: '毒弾', type: 'ACTIVE', color: '#8e44ad', damage: 15, rate: 100, speed: 3.5, forcedLevel: 1 };
+    GEMS.PSYCHIC = { id: 'psychic', name: '念動力', type: 'ACTIVE', color: '#e056fd', damage: 10, rate: 45, speed: 7, forcedLevel: 1 };
+    GEMS.WATER   = { id: 'water',   name: '激流',   type: 'ACTIVE', color: '#3498db', damage: 20, rate: 30, speed: 9, forcedLevel: 1 };
+    GEMS.ELECTRIC= { id: 'electric',name: '電撃',   type: 'ACTIVE', color: '#f1c40f', damage: 12, rate: 29, speed: 20, forcedLevel: 1, chain_count: 3, chain_range: 250 };
+    GEMS.ROCK    = { id: 'rock',    name: '隕石',   type: 'ACTIVE', color: '#7f8c8d', damage: 90, rate: 70, speed: 8, forcedLevel: 1 };
+    GEMS.PLANT   = { id: 'plant',   name: '茨',     type: 'ACTIVE', color: '#2ecc71', damage: 18, rate: 40, speed: 8, forcedLevel: 1, pierce_count: 2 };
 }
 
 let enemySpawnCounter = 0;
@@ -1052,11 +1104,13 @@ function handleCanvasInput(event) {
 
     // Target
     let clickedEnemy = null;
-    for (const enemy of activeEnemies) {
-        const dist = Math.hypot(enemy.positionX - clickX, enemy.positionY - clickY);
-        if (dist < enemy.size * 1.2) {
-            clickedEnemy = enemy;
-            break;
+    if (!engineState.isGameOver) {
+        for (const enemy of activeEnemies) {
+            const dist = Math.hypot(enemy.positionX - clickX, enemy.positionY - clickY);
+            if (dist < enemy.size * 1.2) {
+                clickedEnemy = enemy;
+                break;
+            }
         }
     }
     if (clickedEnemy) {
@@ -1115,9 +1169,17 @@ class MagicProjectile {
         this.chainCount = config.chain_count || 0;
         this.chainRange = config.chain_range || 0;
 
+        // Stats Tracking
+        this.sourceGemId = config.sourceGemId || config.id; 
+
         // Artifact Flags
         this.isHoming = config.isHoming || false;
         this.isBound = config.isBound || false;
+
+        if (this.isHoming) {
+            this.damageValue *= 0.7; // -30% Hit Damage Penalty
+            this.homingLifeTimer = 180; // 消滅タイマー: 3秒 (60fps * 3)
+        }
         this.boundCount = 0;
 
         this.hitTargetIds = new Set();
@@ -1141,6 +1203,13 @@ class MagicProjectile {
     update() {
         // Homing Logic (Artifact: Homing Beacon)
         if (this.isHoming && !this.isFallingRock) {
+            // 時間経過による消滅
+            this.homingLifeTimer--;
+            if (this.homingLifeTimer <= 0) {
+                this.isAlive = false;
+                return;
+            }
+
             if (!this.target || !this.target.isActive) {
                 let minDist = 400;
                 let newTarget = null;
@@ -1206,6 +1275,8 @@ class MagicProjectile {
 
     draw(context) {
         context.save();
+
+        // 1. Electric (Lightning Bolt)
         if (this.effectType === 'electric') {
             context.shadowBlur = 15;
             context.shadowColor = "#f1c40f";
@@ -1217,8 +1288,9 @@ class MagicProjectile {
             const tailX = this.currentX - Math.cos(angle) * tailLen;
             const tailY = this.currentY - Math.sin(angle) * tailLen;
             context.moveTo(tailX, tailY);
-            const midX = (tailX + this.currentX) / 2 + (Math.random() - 0.5) * 10;
-            const midY = (tailY + this.currentY) / 2 + (Math.random() - 0.5) * 10;
+            // Jagged line
+            const midX = (tailX + this.currentX) / 2 + (Math.random() - 0.5) * 15;
+            const midY = (tailY + this.currentY) / 2 + (Math.random() - 0.5) * 15;
             context.lineTo(midX, midY);
             context.lineTo(this.currentX, this.currentY);
             context.stroke();
@@ -1226,8 +1298,10 @@ class MagicProjectile {
             return;
         }
 
+        // 2. Falling Rock (Meteor)
         if (this.isFallingRock) {
             context.save();
+            // Warning Indicator on ground
             const pulse = (Date.now() % 500) / 500; 
             context.fillStyle = `rgba(231, 76, 60, ${0.1 + pulse * 0.2})`;
             context.strokeStyle = `rgba(231, 76, 60, ${0.4 + pulse * 0.4})`;
@@ -1240,31 +1314,131 @@ class MagicProjectile {
             context.stroke();
             context.restore();
 
+            // The Rock itself
             context.shadowBlur = 10;
             context.shadowColor = "#e67e22";
-            context.fillStyle = "#7f8c8d";
+            context.fillStyle = "#596275"; // Darker rock color
+            context.translate(this.currentX, this.currentY);
+
+            // Rotating rock visual
+            const rockRotation = (Date.now() / 200) + this.currentX; 
+            context.rotate(rockRotation);
             context.beginPath();
-            context.arc(this.currentX, this.currentY, 30, 0, Math.PI * 2);
+            // Irregular jagged shape
+            for (let i = 0; i < 6; i++) {
+                const angle = (i * Math.PI * 2) / 6;
+                const r = 30 + (i % 2 === 0 ? 5 : -5);
+                const rx = Math.cos(angle) * r;
+                const ry = Math.sin(angle) * r;
+                if (i === 0) context.moveTo(rx, ry);
+                else context.lineTo(rx, ry);
+            }
+            context.closePath();
             context.fill();
-            context.fillStyle = "rgba(255, 80, 0, 0.6)";
+
+            // Trail
+            context.rotate(-rockRotation); // Reset rotation for trail
+            context.fillStyle = "rgba(231, 76, 60, 0.6)";
             context.beginPath();
-            context.moveTo(this.currentX - 25, this.currentY);
-            context.lineTo(this.currentX + 25, this.currentY);
-            context.lineTo(this.currentX, this.currentY - 80);
+            context.moveTo(-25, 0);
+            context.lineTo(25, 0);
+            context.lineTo(0, -90); // Trail goes up
             context.fill();
         } 
         else {
+            // 3. Standard Projectiles (Shape based on type)
             context.shadowBlur = RENDER_CONSTANTS.EFFECT_SHADOW_BLUR;
             context.shadowColor = this.glowColor;
             context.fillStyle = this.glowColor;
+
+            // Rotate based on velocity
+            const angle = Math.atan2(this.velocityY, this.velocityX);
+            const size = RENDER_CONSTANTS.PROJECTILE_SIZE;
+
+            context.translate(this.currentX, this.currentY);
+            context.rotate(angle);
+
             context.beginPath();
+
             if (this.isShatterShard) {
-                context.moveTo(this.currentX + 5, this.currentY);
-                context.lineTo(this.currentX - 5, this.currentY + 2);
-                context.lineTo(this.currentX - 5, this.currentY - 2);
-            } else {
-                context.arc(this.currentX, this.currentY, RENDER_CONSTANTS.PROJECTILE_SIZE, 0, Math.PI * 2);
+                // Shard: Small Diamond
+                context.moveTo(8, 0);
+                context.lineTo(-4, 4);
+                context.lineTo(-4, -4);
+                context.closePath();
             }
+            else if (this.effectType === 'arrow') {
+                // Arrow: Sharp Triangle / Arrowhead
+                // Tip at (size*1.5, 0), Tail at (-size, +/- size)
+                context.moveTo(size * 1.5, 0);
+                context.lineTo(-size, size * 0.8);
+                context.lineTo(-size * 0.5, 0); // Indent at back
+                context.lineTo(-size, -size * 0.8);
+                context.closePath();
+            }
+            else if (this.effectType === 'fireball' || this.effectType === 'drone_shot') {
+                // Fireball: Tear shape (Round front, pointy back)
+                context.arc(0, 0, size, 0, Math.PI * 2);
+                // Add a trail shape behind
+                context.moveTo(0, size);
+                context.lineTo(-size * 2.5, 0);
+                context.lineTo(0, -size);
+                context.fill(); // Fill the trail separately combined
+            }
+            else if (this.effectType === 'plant') {
+                // Plant: Shuriken / Thorn (Spinning)
+                const spin = (Date.now() / 100);
+                context.rotate(spin); // Extra spin on top of directional
+                for (let i = 0; i < 4; i++) {
+                    const theta = (Math.PI / 2) * i;
+                    const x = Math.cos(theta) * size * 1.5;
+                    const y = Math.sin(theta) * size * 1.5;
+                    context.lineTo(x, y);
+                    // Curve inward
+                    const thetaMid = theta + Math.PI / 4;
+                    const xm = Math.cos(thetaMid) * size * 0.4;
+                    const ym = Math.sin(thetaMid) * size * 0.4;
+                    context.lineTo(xm, ym);
+                }
+                context.closePath();
+            }
+            else if (this.effectType === 'poison') {
+                // Poison: Blob
+                context.arc(0, 0, size, 0, Math.PI * 2);
+                // Dripping effect (random small circles behind)
+                if (Math.random() < 0.3) {
+                     context.arc(-size * 2, (Math.random()-0.5)*size, size/2, 0, Math.PI*2);
+                }
+            }
+            else if (this.effectType === 'water') {
+                 // Water: Streamlined Drop
+                 context.moveTo(size, 0);
+                 context.bezierCurveTo(-size, size, -size*2, 0, -size, -size);
+                 context.closePath();
+            }
+            else if (this.effectType === 'psychic') {
+                 // Psychic: Ring / Hollow Circle
+                 context.arc(0, 0, size * 1.2, 0, Math.PI * 2);
+                 context.fill(); // Outer glow
+                 context.globalCompositeOperation = 'destination-out';
+                 context.beginPath();
+                 context.arc(0, 0, size * 0.6, 0, Math.PI * 2);
+                 context.fill(); // Hole in middle
+                 context.globalCompositeOperation = 'source-over';
+            }
+            else if (this.effectType === 'nova') {
+                // Nova: Diamond / Crystal
+                context.moveTo(size, 0);
+                context.lineTo(0, size);
+                context.lineTo(-size, 0);
+                context.lineTo(0, -size);
+                context.closePath();
+            }
+            else {
+                // Default: Circle
+                context.arc(0, 0, size, 0, Math.PI * 2);
+            }
+
             context.fill();
         }
         context.restore();
@@ -1432,6 +1606,37 @@ class EnemyUnit {
         this.bossState = 'ENTER'; 
         this.attackTimer = 0;
         this.moveAngle = 0;
+
+        // 撃破演出用
+        this.isDying = false;
+        this.deathProgress = 0;
+
+        // ボス専用：召喚タイマー (約6〜8秒周期)
+        this.summonTimer = 240 + Math.random() * 120;
+    }
+
+    // ボス専用：周囲に雑魚を召喚
+    performSummon() {
+        const count = 3 + Math.floor(engineState.currentWaveNumber / 3); // 後半ほど増える
+        const radius = this.size + 40;
+
+        for (let i = 0; i < count; i++) {
+            const angle = (Math.PI * 2 / count) * i;
+            const spawnX = this.positionX + Math.cos(angle) * radius;
+            const spawnY = this.positionY + Math.sin(angle) * radius;
+
+            // 召喚されるのは機動力の高い SWARM 
+            const minion = new EnemyUnit(ENEMY_TIERS.SWARM, spawnX, spawnY);
+            activeEnemies.push(minion);
+
+            // 召喚エフェクト
+            for (let p = 0; p < 5; p++) {
+                activeParticles.push(new ParticleEffect(spawnX, spawnY, this.tier.color, 4));
+            }
+        }
+
+        activeFloatingTexts.push(new FloatingText(this.positionX, this.positionY - 50, "SUMMON!", this.tier.color, 24));
+        triggerScreenShake(5, 3);
     }
 
     applyStatus(type, power, level = 1) {
@@ -1498,6 +1703,7 @@ class EnemyUnit {
 
         // 1. STEAM ERUPTION: Burn + Soaked -> "蒸発"
         if (this.burnTimer > 0 && this.soakedTimer > 0) {
+            if (window.recordSynergyDiscovery) window.recordSynergyDiscovery('steam');
             this.burnTimer = 0;
             this.soakedTimer = 0;
             const steamDmg = (this.maxHealth * 0.15) + 150; 
@@ -1513,6 +1719,7 @@ class EnemyUnit {
 
         // 2. TOXIC DETONATION: Burn + Poison -> "毒爆"
         if (this.burnTimer > 0 && this.poisonStacks > 0) {
+            if (window.recordSynergyDiscovery) window.recordSynergyDiscovery('toxic_detonation');
             this.burnTimer = 0;
             const stacks = this.poisonStacks;
             this.poisonStacks = 0;
@@ -1531,6 +1738,7 @@ class EnemyUnit {
 
         // 3. ELECTRO-CHARGED: Shock + Soaked -> "感電"
         if (this.shockTimer > 0 && this.soakedTimer > 0) {
+            if (window.recordSynergyDiscovery) window.recordSynergyDiscovery('electro_charged');
             let chains = 0;
             const range = 250;
 
@@ -1560,6 +1768,7 @@ class EnemyUnit {
 
         // 4. MELTDOWN: Burn + Freeze -> "融解"
         if (this.burnTimer > 0 && this.freezeTimer > 0) {
+            if (window.recordSynergyDiscovery) window.recordSynergyDiscovery('meltdown');
             this.burnTimer = 0;
             this.freezeTimer = 0;
             const meltDmg = (this.maxHealth * 0.25) + 300;
@@ -1575,30 +1784,37 @@ class EnemyUnit {
 
         // 5. OVERLOAD: Burn + Shock -> "過負荷"
         if (this.burnTimer > 0 && this.shockTimer > 0) {
+            if (window.recordSynergyDiscovery) window.recordSynergyDiscovery('overload');
             this.burnTimer = 0;
             this.shockTimer = 0;
-            const overloadDmg = (this.maxHealth * 0.1) + 200;
+            // 威力調整: 割合ダメージ 10% -> 5%, 固定値 200 -> 100
+            const overloadDmg = (this.maxHealth * 0.05) + 100;
 
-            activeFloatingTexts.push(new FloatingText(this.positionX, this.positionY - 60, "過負荷", "#ff5252", 38));
-            for(let i=0; i<40; i++) {
-                activeParticles.push(new ParticleEffect(this.positionX, this.positionY, "#ff5252", 10));
+            activeFloatingTexts.push(new FloatingText(this.positionX, this.positionY - 60, "過負荷", "#ff5252", 32));
+            for(let i=0; i<30; i++) {
+                activeParticles.push(new ParticleEffect(this.positionX, this.positionY, "#ff5252", 8));
             }
-            triggerScreenShake(15, 12);
-            applyAreaDamage(this.positionX, this.positionY, 180, overloadDmg, 'overload');
+            triggerScreenShake(8, 6); // 揺れも少し抑えめに
+
+            // 半径調整: 180 -> 130
+            const range = 130;
+            applyAreaDamage(this.positionX, this.positionY, range, overloadDmg, 'overload');
 
             activeEnemies.forEach(e => {
                 if(!e.isActive) return;
                 const d = Math.hypot(e.positionX - this.positionX, e.positionY - this.positionY);
-                if(d < 180 && e.tier.id !== 'BOSS') {
+                if(d < range && e.tier.id !== 'BOSS') {
                     const angle = Math.atan2(e.positionY - this.positionY, e.positionX - this.positionX);
-                    e.positionX += Math.cos(angle) * 60;
-                    e.positionY += Math.sin(angle) * 60;
+                    // ノックバック調整: 60 -> 30
+                    e.positionX += Math.cos(angle) * 30;
+                    e.positionY += Math.sin(angle) * 30;
                 }
             });
         }
 
         // 6. SUPERCONDUCT: Freeze + Shock -> "超電導"
         if (this.freezeTimer > 0 && this.shockTimer > 0) {
+            if (window.recordSynergyDiscovery) window.recordSynergyDiscovery('superconduct');
             this.freezeTimer = 0;
             this.shockTimer = 0;
             const superDmg = (this.maxHealth * 0.1) + 150;
@@ -1618,6 +1834,7 @@ class EnemyUnit {
         // 7. CORROSION: Poison + Soaked -> "腐食"
         // Effect: Acid cloud, high damage tick
         if (this.poisonStacks > 0 && this.soakedTimer > 0) {
+            if (window.recordSynergyDiscovery) window.recordSynergyDiscovery('corrosion');
             const stacks = this.poisonStacks;
             this.poisonStacks = 0; 
             this.soakedTimer = 0;
@@ -1637,6 +1854,7 @@ class EnemyUnit {
         // 8. PLAGUE: Poison + Shock -> "伝染"
         // Effect: Spreads poison to neighbors via lightning
         if (this.poisonStacks > 0 && this.shockTimer > 0) {
+            if (window.recordSynergyDiscovery) window.recordSynergyDiscovery('plague');
             // Keep poison stacks, spread them!
             const stacksToSpread = Math.max(1, this.poisonStacks);
             this.shockTimer = 0; // Consume shock
@@ -1676,6 +1894,7 @@ class EnemyUnit {
         // 9. GLACIER: Freeze + Soaked -> "氷河"
         // Effect: Long freeze + Crushing damage
         if (this.freezeTimer > 0 && this.soakedTimer > 0) {
+            if (window.recordSynergyDiscovery) window.recordSynergyDiscovery('glacier');
             // Consume soaked, Extend freeze massively
             this.soakedTimer = 0;
             this.freezeTimer = 300; // 5 seconds freeze
@@ -1700,6 +1919,7 @@ class EnemyUnit {
 
         // 10. CHAOS FLARE: Confusion + Burn
         if (this.confusionTimer > 0 && this.burnTimer > 0) {
+            if (window.recordSynergyDiscovery) window.recordSynergyDiscovery('chaos_flare');
             this.burnTimer = 0; 
             const dmg = 40 + (engineState.currentLevel * 5);
             activeZoneEffects.push(new ZoneEffect(this.positionX, this.positionY, 'FIRE_ZONE', { damage: dmg }));
@@ -1709,6 +1929,7 @@ class EnemyUnit {
 
         // 11. CHAOS MIASMA: Confusion + Poison
         if (this.confusionTimer > 0 && this.poisonStacks > 0) {
+            if (window.recordSynergyDiscovery) window.recordSynergyDiscovery('chaos_miasma');
             this.poisonStacks = 0;
             const dmg = 30 + (engineState.currentLevel * 4);
             activeZoneEffects.push(new ZoneEffect(this.positionX, this.positionY, 'POISON_CLOUD', { damage: dmg }));
@@ -1718,6 +1939,7 @@ class EnemyUnit {
 
         // 12. CHAOS STORM: Confusion + Shock
         if (this.confusionTimer > 0 && this.shockTimer > 0) {
+            if (window.recordSynergyDiscovery) window.recordSynergyDiscovery('chaos_storm');
             this.shockTimer = 0;
             const dmg = 50 + (engineState.currentLevel * 6);
             activeZoneEffects.push(new ZoneEffect(this.positionX, this.positionY, 'STATIC_FIELD', { damage: dmg }));
@@ -1727,6 +1949,7 @@ class EnemyUnit {
 
         // 13. CHAOS FROST: Confusion + Freeze
         if (this.confusionTimer > 0 && this.freezeTimer > 0) {
+            if (window.recordSynergyDiscovery) window.recordSynergyDiscovery('chaos_frost');
             this.freezeTimer = 0;
             const dmg = 20 + (engineState.currentLevel * 3);
             activeZoneEffects.push(new ZoneEffect(this.positionX, this.positionY, 'FREEZE_ZONE', { damage: dmg }));
@@ -1740,6 +1963,16 @@ class EnemyUnit {
     }
 
     update() {
+        // 死亡演出（ボスの沈下）
+        if (this.isDying) {
+            this.deathProgress += 0.015; // アニメーション速度
+            this.positionY += 1.5;      // 下に沈む
+            if (this.deathProgress >= 1.0) {
+                this.isActive = false;
+            }
+            return;
+        }
+
         // Time Stop Check
         if (engineState.timeStopTimer > 0) return;
 
@@ -1838,6 +2071,16 @@ class EnemyUnit {
 
                         this.moveAngle += 0.02;
                         this.positionX += Math.sin(this.moveAngle) * 0.5;
+
+                        // 召喚ロジック (Wave 4 以降のボス)
+                        if (engineState.currentWaveNumber >= 4) {
+                            this.summonTimer--;
+                            if (this.summonTimer <= 0) {
+                                this.performSummon();
+                                this.summonTimer = 400 + Math.random() * 200; // 次の召喚まで
+                            }
+                        }
+
                         this.attackTimer++;
                         if (this.attackTimer > 60) { 
                             const bullet = new EnemyProjectile(this.positionX, this.positionY + 40);
@@ -1875,16 +2118,24 @@ class EnemyUnit {
         if (this.burnTimer > 0) {
             this.burnTimer--;
             if (this.burnTimer % EFFECT_CONSTANTS.BURN_TICK_RATE === 0) {
-                this.takeDamage(this.burnDamagePerTick, false, 'burn_dot');
+                const dmg = this.burnDamagePerTick;
+                this.takeDamage(dmg, false, 'burn_dot');
+                // Artifact: Xeno Cell (Heal 10% of DoT)
+                if (engineState.artifacts.some(a => a.id === 'xeno_cell')) {
+                    engineState.baseIntegrity = Math.min(GAME_SETTINGS.BASE_MAX_HP + engineState.stats.hp_max, engineState.baseIntegrity + (dmg * 0.1));
+                }
                 activeParticles.push(new ParticleEffect(this.positionX, this.positionY, EFFECT_CONSTANTS.COLOR_BURN, 2));
             }
         }
         if (this.poisonTimer > 0) {
             this.poisonTimer--;
             if (this.poisonTimer % 30 === 0) { 
-                // [Patch] Linear scaling: Base (20%) * Stacks
                 const dmg = (this.poisonDamage || 5) * this.poisonStacks;
                 this.takeDamage(dmg, false, 'poison_dot');
+                // Artifact: Xeno Cell (Heal 10% of DoT)
+                if (engineState.artifacts.some(a => a.id === 'xeno_cell')) {
+                    engineState.baseIntegrity = Math.min(GAME_SETTINGS.BASE_MAX_HP + engineState.stats.hp_max, engineState.baseIntegrity + (dmg * 0.1));
+                }
                 activeParticles.push(new ParticleEffect(this.positionX, this.positionY, "#8e44ad", 2));
             }
         }
@@ -1930,12 +2181,21 @@ class EnemyUnit {
 
         // Castle Damage Logic (If passed shield or shield inactive)
         if (this.positionY > GAME_SETTINGS.CASTLE_Y) {
+            // Artifact: Midas Coin (Spend gold to negate damage)
+            if (engineState.gold >= 10 && engineState.artifacts.some(a => a.id === 'midas_coin')) {
+                engineState.gold -= 10;
+                activeFloatingTexts.push(new FloatingText(this.positionX, GAME_SETTINGS.CASTLE_Y, "-10G GUARD", "#fdcb6e", 16));
+                this.isActive = false;
+                return;
+            }
+
             let dmg = GAME_SETTINGS.CASTLE_DAMAGE;
-            // Artifact: Glass Cannon
-            if (engineState.artifacts.some(a => a.id === 'glass_cannon')) dmg *= 2.0;
+            // Apply Damage Taken Multiplier (e.g. Glass Cannon)
+            dmg *= (1.0 + (engineState.stats.damage_taken_mul || 0));
 
             engineState.baseIntegrity -= dmg;
             triggerScreenShake(10, 5); 
+            audioManager.play('WARNING');
             this.isActive = false;
         }
     }
@@ -1945,13 +2205,18 @@ class EnemyUnit {
             const artifacts = engineState.artifacts;
 
             // Artifact: Giant Killer
-            if ((this.tier.id === 'BOSS' || this.tier.id === 'TANK') && artifacts.some(a => a.id === 'giant_killer')) {
-                finalDamage *= 1.4;
+            const giantKiller = artifacts.find(a => a.id === 'giant_killer');
+            if ((this.tier.id === 'BOSS' || this.tier.id === 'TANK') && giantKiller) {
+                finalDamage *= (giantKiller.config ? giantKiller.config.multiplier : 1.4);
             }
 
             // Artifact: Sniper Scope (Distance Bonus: Top half of screen)
-            if (this.positionY < 400 && artifacts.some(a => a.id === 'sniper_scope')) {
-                finalDamage *= 1.3;
+            const sniperScope = artifacts.find(a => a.id === 'sniper_scope');
+            if (sniperScope) {
+                const rangeY = sniperScope.config ? sniperScope.config.range_y : 400;
+                if (this.positionY < rangeY) {
+                    finalDamage *= (sniperScope.config ? sniperScope.config.multiplier : 1.3);
+                }
             }
 
             // Artifact: Elemental Mixer (2+ Statuses)
@@ -1968,8 +2233,9 @@ class EnemyUnit {
             }
 
             // Artifact: Oil Flask (Direct hit boost for fireball)
-            if (sourceId === 'fireball' && artifacts.some(a => a.id === 'oil_flask')) {
-                finalDamage *= 1.5; 
+            const oilFlask = artifacts.find(a => a.id === 'oil_flask');
+            if (sourceId === 'fireball' && oilFlask) {
+                finalDamage *= (oilFlask.config ? oilFlask.config.multiplier : 1.5); 
             }
 
             // Artifact: Zero Crystal (Instant Kill Check)
@@ -1993,6 +2259,11 @@ class EnemyUnit {
 
             this.health -= finalDamage;
             this.flashTime = 5;
+
+            // クリティカル時にヒットストップを発動 (約0.05秒)
+            if (isCritical) {
+                engineState.hitStopFrames = 3; 
+            }
 
             // Knockback Logic
             if (this.freezeTimer <= 0 && sourceId !== 'burn_dot' && sourceId !== 'poison_dot' && sourceId !== 'leech_dot') {
@@ -2024,10 +2295,20 @@ class EnemyUnit {
             const fontSize = (isCritical || synergyIds.includes(sourceId)) ? 28 : 18;
             const displayText = isCritical ? `${Math.floor(finalDamage)}!` : `${Math.floor(finalDamage)}`;
             activeFloatingTexts.push(new FloatingText(this.positionX, this.positionY - 20, displayText, popupColor, fontSize));
+            audioManager.play('HIT');
         }
 
     draw(context) {
         context.save();
+
+        if (this.isDying) {
+            // 徐々に透明にし、小さくする
+            context.globalAlpha = Math.max(0, 1.0 - this.deathProgress);
+            const deathScale = 1.0 - (this.deathProgress * 0.4);
+            context.translate(this.positionX, this.positionY);
+            context.scale(deathScale, deathScale);
+            context.translate(-this.positionX, -this.positionY);
+        }
 
         // 1. Target Marker
         if (engineState.manualTargetId === this.id) {
@@ -2130,18 +2411,49 @@ class EnemyUnit {
             context.fillText(`${this.poisonStacks}`, this.positionX, this.positionY + 5);
         }
 
-        // 6. Health Bar
+        // 6. Health Bar & Numeric HP Display (Strategic Placement)
         context.shadowBlur = 0;
-        const hpBarW = 40;
-        const hpBarH = 4;
-        const hpY = this.positionY - halfSize - 10;
+        const isBoss = this.tier.id === 'BOSS';
+        const hpBarW = isBoss ? 100 : 40; 
+        const hpBarH = isBoss ? 8 : 4;   
 
-        context.fillStyle = "#333";
+        // 描画位置の決定: ボスは下、ザコは上
+        const hpY = isBoss ? (this.positionY + halfSize + 15) : (this.positionY - halfSize - 15);
+
+        // 背景（黒枠）
+        context.fillStyle = "rgba(0, 0, 0, 0.8)";
+        context.fillRect(this.positionX - hpBarW/2 - 1, hpY - 1, hpBarW + 2, hpBarH + 2);
+
+        // バー本体
+        context.fillStyle = "#222";
         context.fillRect(this.positionX - hpBarW/2, hpY, hpBarW, hpBarH);
 
-        context.fillStyle = this.freezeTimer > 0 ? "#74b9ff" : (this.tier.id === 'BOSS' ? "#e74c3c" : "#2ecc71");
+        const hpColor = this.freezeTimer > 0 ? "#74b9ff" : (isBoss ? "#ff3f34" : "#2ecc71");
+        context.fillStyle = hpColor;
         const healthRatio = Math.max(0, this.health / this.maxHealth);
         context.fillRect(this.positionX - hpBarW/2, hpY, hpBarW * healthRatio, hpBarH);
+
+        // ボスの場合、体の中央に残りHP数値を表示
+        if (isBoss) {
+            context.font = "bold 16px 'Consolas', 'Monaco', monospace"; // デジタル感のあるフォント
+            context.textAlign = "center";
+            context.textBaseline = "middle";
+            const displayHp = Math.ceil(this.health).toLocaleString();
+
+            // 視認性のためのドロップシャドウ/縁取り
+            context.strokeStyle = "#000";
+            context.lineWidth = 4;
+            context.strokeText(displayHp, this.positionX, this.positionY);
+
+            // ネオンカラーの数値
+            context.fillStyle = "#fff";
+            context.fillText(displayHp, this.positionX, this.positionY);
+
+            // ボス名を表示 (バーのすぐ下)
+            context.font = "bold 10px sans-serif";
+            context.fillStyle = "#aaa";
+            context.fillText(this.tier.name, this.positionX, hpY + hpBarH + 10);
+        }
 
         context.restore();
     }
@@ -2328,10 +2640,12 @@ class EnemyProjectile {
                     triggerScreenShake(5, 5);
 
                     // Artifact: Mana Converter
-                    if (engineState.artifacts.some(a => a.id === 'mana_conv')) {
+                    const manaConv = engineState.artifacts.find(a => a.id === 'mana_conv');
+                    if (manaConv) {
+                        const heal = manaConv.config ? manaConv.config.heal_amount : 20;
                         const maxHP = GAME_SETTINGS.BASE_MAX_HP + engineState.stats.hp_max;
-                        engineState.baseIntegrity = Math.min(engineState.baseIntegrity + 20, maxHP);
-                        activeFloatingTexts.push(new FloatingText(this.x, this.y - 30, "HP+20", "#3498db", 16));
+                        engineState.baseIntegrity = Math.min(engineState.baseIntegrity + heal, maxHP);
+                        activeFloatingTexts.push(new FloatingText(this.x, this.y - 30, `HP+${heal}`, "#3498db", 16));
                     }
                     // Artifact: Reflect Prism
                     if (engineState.artifacts.some(a => a.id === 'reflect_prism')) {
@@ -2350,8 +2664,8 @@ class EnemyProjectile {
 
         if (this.y >= GAME_SETTINGS.CASTLE_Y) {
             let dmg = this.damage;
-            // Artifact: Glass Cannon
-            if (engineState.artifacts.some(a => a.id === 'glass_cannon')) dmg *= 2.0;
+            // Apply Damage Taken Multiplier (e.g. Glass Cannon)
+            dmg *= (1.0 + (engineState.stats.damage_taken_mul || 0));
 
             engineState.baseIntegrity -= dmg;
             activeParticles.push(new ParticleEffect(this.x, this.y, "#e74c3c", 6));
@@ -2415,6 +2729,10 @@ function applyAreaDamage(centerX, centerY, radius, damage, sourceId) {
 
     const finalRadius = radius * (1.0 + (engineState.stats.aoe_pct || 0));
     const color = sourceId === 'fireball' ? "#e67e22" : (sourceId === 'rock' ? "#7f8c8d" : "#3498db");
+
+    // Shockwave Effect (Arcade Upgrade)
+    activeShockwaves.push(new ShockwaveEffect(centerX, centerY, color, finalRadius));
+
     for (let i = 0; i < 15; i++) {
         activeParticles.push(new ParticleEffect(centerX, centerY, color, 6));
     }
@@ -2423,6 +2741,7 @@ function applyAreaDamage(centerX, centerY, radius, damage, sourceId) {
         const dist = Math.hypot(enemy.positionX - centerX, enemy.positionY - centerY);
         if (dist <= finalRadius + (enemy.size/2)) { 
             enemy.takeDamage(damage, false, sourceId);
+            if (engineState.recordDamage) engineState.recordDamage(sourceId, damage);
 
             if (sourceId === 'nova' && Math.random() < EFFECT_CONSTANTS.FREEZE_CHANCE) {
                 enemy.applyStatus('FREEZE');
@@ -2436,8 +2755,16 @@ function applyAreaDamage(centerX, centerY, radius, damage, sourceId) {
 }
 
 function handleEnemyDeath(enemy, isCrit, shatterDamage = 10) {
-    if (!enemy.isActive) return;
-    enemy.isActive = false;
+    if (!enemy.isActive || enemy.isDying) return;
+
+    const isBoss = enemy.tier.id === 'BOSS';
+
+    if (isBoss) {
+        enemy.isDying = true;
+        enemy.deathProgress = 0;
+    } else {
+        enemy.isActive = false;
+    }
 
     if (isCrit) triggerScreenShake(5, 3);
     if (enemy.freezeTimer > 0) createIceShatter(enemy.positionX, enemy.positionY, shatterDamage);
@@ -2448,15 +2775,22 @@ function handleEnemyDeath(enemy, isCrit, shatterDamage = 10) {
     }
 
     // Artifact: Vampire Cup
-    if (engineState.artifacts.some(a => a.id === 'vampire_cup')) {
-        const heal = (GAME_SETTINGS.BASE_MAX_HP + engineState.stats.hp_max) * 0.01;
+    const vampireCup = engineState.artifacts.find(a => a.id === 'vampire_cup');
+    if (vampireCup) {
+        const pct = vampireCup.config ? vampireCup.config.heal_pct : 0.01;
+        const heal = (GAME_SETTINGS.BASE_MAX_HP + engineState.stats.hp_max) * pct;
         engineState.baseIntegrity = Math.min(engineState.baseIntegrity + heal, GAME_SETTINGS.BASE_MAX_HP + engineState.stats.hp_max);
     }
 
     // Artifact: Ancient Coin
-    if (engineState.artifacts.some(a => a.id === 'ancient_coin') && Math.random() < 0.05) {
-        engineState.gold += 10;
-        activeFloatingTexts.push(new FloatingText(enemy.positionX, enemy.positionY, "+10G", "#f1c40f", 14));
+    const ancientCoin = engineState.artifacts.find(a => a.id === 'ancient_coin');
+    if (ancientCoin) {
+        const chance = ancientCoin.config ? ancientCoin.config.chance : 0.05;
+        const amount = ancientCoin.config ? ancientCoin.config.amount : 10;
+        if (Math.random() < chance) {
+            engineState.gold += amount;
+            activeFloatingTexts.push(new FloatingText(enemy.positionX, enemy.positionY, `+${amount}G`, "#f1c40f", 14));
+        }
     }
 
     for(let i=0; i<EFFECT_CONSTANTS.PARTICLE_COUNT; i++) activeParticles.push(new ParticleEffect(enemy.positionX, enemy.positionY, "#e74c3c"));
@@ -2466,6 +2800,7 @@ function handleEnemyDeath(enemy, isCrit, shatterDamage = 10) {
 
     addExperience(xpGain);
     if (Math.random() < GAME_SETTINGS.DROP_CHANCE) generateDrop(enemy.positionX, enemy.positionY);
+    audioManager.play('EXPLOSION');
     engineState.checkProgression(enemy);
 }
 
@@ -2528,6 +2863,12 @@ function handleAutoAttack() {
         let finalFireRate = activeGem.rate || 60;
         
         if (activeGem.level > 1) finalFireRate *= (1 - (activeGem.level * 0.02)); 
+
+        // Artifact: Luna Turbo (Fire rate 1.5x during shield)
+        if (engineState.isShieldActive && engineState.artifacts.some(a => a.id === 'luna_turbo')) {
+            rateMod *= 1.5;
+        }
+
         finalFireRate /= rateMod;
 
         let isShotgun = false;
@@ -2535,7 +2876,19 @@ function handleAutoAttack() {
 
         const finalConfig = { ...activeGem };
         finalConfig.damage *= damageMod;
+
+        // Artifact: Luna Wing (Damage + 20% of Projectile Speed)
+        if (engineState.artifacts.some(a => a.id === 'luna_wing')) {
+            const speedBonus = (activeGem.speed || 5) * 0.2;
+            finalConfig.damage *= (1.0 + speedBonus);
+        }
+
         finalConfig.damage *= loadout.scale; 
+
+        // [Patch] Apply Artifact Flags globally to all projectiles in this loadout
+        finalConfig.isHoming = engineState.artifacts.some(a => a.id === 'homing_beacon');
+        finalConfig.isBound = engineState.artifacts.some(a => a.id === 'bound_orb');
+        finalConfig.sourceGemId = activeGem.id; // Track damage source
 
         // Apply Final Damage Multiplier (Keystones)
         if (engineState.stats.final_damage_mul > 0) {
@@ -2543,13 +2896,14 @@ function handleAutoAttack() {
         }
 
         // Artifact: Berserker Helm (HP Loss Bonus)
-        if (engineState.artifacts.some(a => a.id === 'berserker_helm')) {
+        const berserkerHelm = engineState.artifacts.find(a => a.id === 'berserker_helm');
+        if (berserkerHelm) {
             const maxHP = GAME_SETTINGS.BASE_MAX_HP + engineState.stats.hp_max;
             const currentHP = engineState.baseIntegrity;
             // 減少率 (0.0 ~ 1.0)
             const lossRatio = Math.max(0, 1.0 - (currentHP / maxHP));
-            // 最大+50% (係数0.5)
-            finalConfig.damage *= (1.0 + (lossRatio * 0.5));
+            const maxBonus = berserkerHelm.config ? berserkerHelm.config.max_bonus : 0.5;
+            finalConfig.damage *= (1.0 + (lossRatio * maxBonus));
         }
 
         // HIT/DoT 分離（System Hacker 等）
@@ -2568,15 +2922,21 @@ function handleAutoAttack() {
             if (support.damage_mod) finalConfig.damage *= (support.damage_mod * lvlBonus);
             if (support.id === 'multishot') {
                 isShotgun = true;
-                spreadCount = 1 + (support.projectiles || 2) + Math.floor((lvl-1)/3); 
+                // 初期弾数+1、レベルごとに+1 (Lv1=2, Lv2=3...)
+                spreadCount = 1 + (support.projectiles || 1) + (lvl - 1); 
             }
             if (support.speed_mod) finalConfig.speed *= (support.speed_mod * lvlBonus);
-            if (support.rate_mod) finalFireRate *= (support.rate_mod); 
+            if (support.rate_mod) {
+                // 連射速度もレベルで強化 (1.1, 1.2... で割ることで間隔を短縮)
+                finalFireRate *= (support.rate_mod / lvlBonus); 
+            }
             if (support.pierce_count) {
-                finalConfig.pierce_count = (finalConfig.pierce_count || 0) + support.pierce_count + Math.floor(lvl/2);
+                // 初期貫通1、レベルごとに+1
+                finalConfig.pierce_count = (finalConfig.pierce_count || 0) + support.pierce_count + (lvl - 1);
             }
             if (support.chain_count) {
-                finalConfig.chain_count = (finalConfig.chain_count || 0) + support.chain_count + Math.floor(lvl/2);
+                // 初期連鎖+2、レベルごとに+1
+                finalConfig.chain_count = (finalConfig.chain_count || 0) + support.chain_count + (lvl - 1);
                 finalConfig.chain_range = support.range || 200;
             }
         });
@@ -2603,6 +2963,9 @@ function handleAutoAttack() {
         }
 
         if (fire) {
+            // Play Shoot SE
+            if (loadout.isMain) audioManager.play('SHOOT');
+
             // Flat Self Damage
             if (engineState.stats.self_damage > 0) {
                 engineState.baseIntegrity -= (engineState.stats.self_damage * (loadout.isMain ? 1.0 : 0.5));
@@ -2615,21 +2978,21 @@ function handleAutoAttack() {
 
             const fireProjectile = (cfg, tgt, x, y) => {
                 // Artifact: Phantom Barrel (Extra Shot)
-                const shots = engineState.artifacts.some(a => a.id === 'phantom_barrel') && Math.random() < 0.2 ? 2 : 1;
+                const phantomBarrel = engineState.artifacts.find(a => a.id === 'phantom_barrel');
+                let shots = 1;
+                if (phantomBarrel) {
+                    const chance = phantomBarrel.config ? phantomBarrel.config.chance : 0.20;
+                    const extra = phantomBarrel.config ? phantomBarrel.config.extra_shots : 1;
+                    if (Math.random() < chance) shots += extra;
+                }
 
                 // Artifact: Chaos Dice
                 if (engineState.artifacts.some(a => a.id === 'chaos_dice')) {
                     cfg.damage *= (0.5 + Math.random() * 1.5);
                 }
 
-                // Artifact: Homing Beacon & Bound Orb
-                const isHoming = engineState.artifacts.some(a => a.id === 'homing_beacon');
-                const isBound = engineState.artifacts.some(a => a.id === 'bound_orb');
-
                 for(let s=0; s<shots; s++) {
                     const finalCfg = { ...cfg };
-                    if (isHoming) finalCfg.isHoming = true;
-                    if (isBound) finalCfg.isBound = true;
 
                     let aimTarget = tgt;
                     // ... (Original Aim Logic)
@@ -2687,7 +3050,8 @@ function handleAutoAttack() {
                     baseAngle = Math.atan2(deltaY, deltaX);
                 }
                 for (let i = 0; i < spreadCount; i++) {
-                    const angleOffset = (i - (spreadCount - 1) / 2) * EFFECT_CONSTANTS.MULTISHOT_SPREAD_ANGLE;
+                    // [Fix] Smart Spread: 最初の1発は常に正面、2発目以降を左右に振り分けることで偶数時の「中央の穴」を防止
+                    const angleOffset = (i === 0) ? 0 : Math.ceil(i / 2) * (i % 2 === 0 ? 1 : -1) * EFFECT_CONSTANTS.MULTISHOT_SPREAD_ANGLE;
                     const finalAngle = baseAngle + angleOffset;
                     const vx = Math.cos(finalAngle) * finalConfig.speed;
                     const vy = Math.sin(finalAngle) * finalConfig.speed;
@@ -2701,7 +3065,8 @@ function handleAutoAttack() {
                 if (unit.type === 'CLONE') {
                     if (isShotgun) {
                          for (let i = 0; i < spreadCount; i++) {
-                            const angleOffset = (i - (spreadCount - 1) / 2) * EFFECT_CONSTANTS.MULTISHOT_SPREAD_ANGLE;
+                            // [Fix] Smart Spread for Clone
+                            const angleOffset = (i === 0) ? 0 : Math.ceil(i / 2) * (i % 2 === 0 ? 1 : -1) * EFFECT_CONSTANTS.MULTISHOT_SPREAD_ANGLE;
                             let baseAngle = -Math.PI / 2;
                             if (target) baseAngle = Math.atan2(target.positionY - unit.y, target.positionX - unit.x);
                             const finalAngle = baseAngle + angleOffset;
@@ -2786,149 +3151,196 @@ function spawnFormation_Guard() {
 
 function mainLoop() {
     if (engineState.isGameOver) {
-        displayGameOver();
+        // If clear screen is shown, we stop updating but keep rendering is handled by UI overlay
+        // If not clear (died), show Game Over
+        if (engineState.baseIntegrity <= 0) {
+            displayGameOver();
+        } else {
+             // Game Clear State: Keep rendering background but stop logic?
+             // Or just let it run in background? Let's render scene for cool effect.
+             renderScene();
+        }
         return;
     }
+
+    // ヒットストップ処理: 残りフレームがある場合は描画だけ行い、ロジック更新を飛ばす
+    if (engineState.hitStopFrames > 0) {
+        engineState.hitStopFrames--;
+        renderScene();
+        requestAnimationFrame(mainLoop);
+        return;
+    }
+
     if (!engineState.isPaused) {
-        // Time Stopper Tick
-        if (engineState.timeStopTimer > 0) {
-            engineState.timeStopTimer--;
+        // [Patch] Variable Time Step Logic
+        engineState.accumulator += engineState.timeScale;
+        // Cap accumulator to prevent spiral of death
+        if (engineState.accumulator > 5.0) engineState.accumulator = 5.0;
+
+        while (engineState.accumulator >= 1.0) {
+            engineState.accumulator -= 1.0;
+
+            // --- Core Update Logic ---
+            if (engineState.timeStopTimer > 0) {
+                engineState.timeStopTimer--;
+                if (engineState.timeStopTimer <= 0) {
+                    activeFloatingTexts.push(new FloatingText(GAME_SETTINGS.SCREEN_WIDTH/2, GAME_SETTINGS.SCREEN_HEIGHT/2, "RESUME", "#fff", 30));
+                }
+            }
+
+            // Spawn Logic (Paused during Time Stop)
             if (engineState.timeStopTimer <= 0) {
-                activeFloatingTexts.push(new FloatingText(GAME_SETTINGS.SCREEN_WIDTH/2, GAME_SETTINGS.SCREEN_HEIGHT/2, "RESUME", "#fff", 30));
+                enemySpawnCounter++;
+                const rate = Math.max(GAME_SETTINGS.SPAWN_RATE_MIN, GAME_SETTINGS.SPAWN_RATE_BASE - (engineState.currentWaveNumber * 2));
+                if (enemySpawnCounter > rate) {
+                    spawnEnemy();
+                    enemySpawnCounter = 0;
+                }
             }
-        }
 
-        // Spawn Logic (Paused during Time Stop)
-        if (engineState.timeStopTimer <= 0) {
-            enemySpawnCounter++;
-            const rate = Math.max(GAME_SETTINGS.SPAWN_RATE_MIN, GAME_SETTINGS.SPAWN_RATE_BASE - (engineState.currentWaveNumber * 2));
-            if (enemySpawnCounter > rate) {
-                spawnEnemy();
-                enemySpawnCounter = 0;
-            }
-        }
+            handleAutoAttack();
+            engineState.updateEnergy();
+            engineState.updateCrewAbilities(); // Crew CD tick
+            engineState.activeSupportUnits.forEach(unit => unit.update());
+            engineState.activeSupportUnits = engineState.activeSupportUnits.filter(u => u.life > 0);
+            activeZoneEffects.forEach(zone => zone.update());
+            activeZoneEffects = activeZoneEffects.filter(z => z.life > 0);
 
-        handleAutoAttack();
-        engineState.updateEnergy();
-        engineState.updateCrewAbilities(); // Crew CD tick
-        engineState.activeSupportUnits.forEach(unit => unit.update());
-        engineState.activeSupportUnits = engineState.activeSupportUnits.filter(u => u.life > 0);
-        activeZoneEffects.forEach(zone => zone.update());
-        activeZoneEffects = activeZoneEffects.filter(z => z.life > 0);
+            activeProjectiles.forEach(projectile => projectile.update());
+            activeEnemyProjectiles.forEach(ep => ep.update());
+            activeEnemyProjectiles = activeEnemyProjectiles.filter(ep => ep.isAlive);
+            engineState.activeDrops.forEach(drop => drop.update());
 
-        activeProjectiles.forEach(projectile => projectile.update());
-        activeEnemyProjectiles.forEach(ep => ep.update());
-        activeEnemyProjectiles = activeEnemyProjectiles.filter(ep => ep.isAlive);
-        engineState.activeDrops.forEach(drop => drop.update());
-        
-        activeEnemies.forEach(enemy => {
-            enemy.update();
-            activeProjectiles.forEach(projectile => {
-                if (projectile.hitTargetIds.has(enemy.id)) return;
-                if (enemy.confusionTimer > 0) return;
+            activeEnemies.forEach(enemy => {
+                enemy.update();
 
-                const hitDist = (enemy.size / 2) + RENDER_CONSTANTS.PROJECTILE_SIZE;
-                const collisionDistance = Math.hypot(enemy.positionX - projectile.currentX, enemy.positionY - projectile.currentY);
+                // 死亡演出中の敵には当たり判定を発生させない
+                if (enemy.isDying) return;
 
-                if (collisionDistance < hitDist) {
-                    projectile.hitTargetIds.add(enemy.id);
+                activeProjectiles.forEach(projectile => {
+                    if (!projectile.isAlive) return;
+                    if (projectile.hitTargetIds.has(enemy.id)) return;
+                    if (enemy.confusionTimer > 0) return;
 
-                    if (engineState.stats.life_on_hit > 0) {
-                        const maxHP = GAME_SETTINGS.BASE_MAX_HP + engineState.stats.hp_max;
-                        if (engineState.baseIntegrity < maxHP) {
-                            engineState.baseIntegrity = Math.min(engineState.baseIntegrity + engineState.stats.life_on_hit, maxHP);
+                    const hitDist = (enemy.size / 2) + RENDER_CONSTANTS.PROJECTILE_SIZE;
+                    const collisionDistance = Math.hypot(enemy.positionX - projectile.currentX, enemy.positionY - projectile.currentY);
+
+                    if (collisionDistance < hitDist) {
+                        projectile.hitTargetIds.add(enemy.id);
+
+                        if (engineState.stats.life_on_hit > 0) {
+                            const maxHP = GAME_SETTINGS.BASE_MAX_HP + engineState.stats.hp_max;
+                            if (engineState.baseIntegrity < maxHP) {
+                                engineState.baseIntegrity = Math.min(engineState.baseIntegrity + engineState.stats.life_on_hit, maxHP);
+                            }
                         }
-                    }
 
-                    let critChance = EFFECT_CONSTANTS.BASE_CRIT_CHANCE + engineState.stats.crit_chance;
-                    const amulet = engineState.equippedArtifacts.AMULET;
-                    if (amulet && amulet.stats && amulet.stats.crit_chance) critChance += amulet.stats.crit_chance;
-                    const isCrit = Math.random() < critChance;
-                    const finalDamage = isCrit ? projectile.damageValue * EFFECT_CONSTANTS.BASE_CRIT_MULTIPLIER : projectile.damageValue;
+                        let critChance = EFFECT_CONSTANTS.BASE_CRIT_CHANCE + engineState.stats.crit_chance;
+                        const amulet = engineState.equippedArtifacts.AMULET;
+                        if (amulet && amulet.stats && amulet.stats.crit_chance) critChance += amulet.stats.crit_chance;
+                        const isCrit = Math.random() < critChance;
+                        const finalDamage = isCrit ? projectile.damageValue * EFFECT_CONSTANTS.BASE_CRIT_MULTIPLIER : projectile.damageValue;
 
-                    enemy.takeDamage(finalDamage, isCrit, projectile.effectType);
+                        enemy.takeDamage(finalDamage, isCrit, projectile.effectType);
+                        engineState.recordDamage(projectile.sourceGemId, finalDamage);
 
-                    // For DoT-based statuses, prefer rawDamageValue so future "hit-only penalty" (e.g. System Hacker)
-                    // won't unintentionally nerf status scaling.
-                    const statusPower = (projectile.rawDamageValue !== undefined) ? projectile.rawDamageValue : projectile.damageValue;
+                        const statusPower = (projectile.rawDamageValue !== undefined) ? projectile.rawDamageValue : projectile.damageValue;
 
-                    if (projectile.effectType === 'fireball') enemy.applyStatus('BURN', statusPower);
-                    else if (projectile.effectType === 'nova') applyAreaDamage(enemy.positionX, enemy.positionY, EFFECT_CONSTANTS.NOVA_RADIUS, finalDamage * 0.5, 'nova');
-                    else if (projectile.effectType === 'poison') {
-                        activeZoneEffects.push(new ZoneEffect(enemy.positionX, enemy.positionY, 'POISON_CLOUD', { damage: statusPower }));
-                        projectile.isAlive = false; 
-                    }
-                    else if (projectile.effectType === 'psychic') enemy.applyStatus('CONFUSION', 0, engineState.currentLevel);
-                    else if (projectile.effectType === 'water') enemy.applyStatus('SOAKED', 0);
-                    else if (projectile.effectType === 'electric') enemy.applyStatus('SHOCK', finalDamage);
-                    else if (projectile.effectType === 'plant') {
-                        // [Patch] Leech Seed: Apply status instead of instant heal
-                        const ratio = GAME_SETTINGS.LEECH_RATIO || 0.02;
-                        const healPerTick = finalDamage * ratio; 
-                        enemy.applyStatus('LEECH', healPerTick);
-                        activeParticles.push(new ParticleEffect(enemy.positionX, enemy.positionY, "#2ecc71", 3));
-                    }
+                        if (projectile.effectType === 'fireball') enemy.applyStatus('BURN', statusPower);
+                        else if (projectile.effectType === 'nova') applyAreaDamage(enemy.positionX, enemy.positionY, EFFECT_CONSTANTS.NOVA_RADIUS, finalDamage * 0.5, 'nova');
+                        else if (projectile.effectType === 'poison') {
+                            activeZoneEffects.push(new ZoneEffect(enemy.positionX, enemy.positionY, 'POISON_CLOUD', { damage: statusPower }));
+                            projectile.isAlive = false; 
+                        }
+                        else if (projectile.effectType === 'psychic') enemy.applyStatus('CONFUSION', 0, engineState.currentLevel);
+                        else if (projectile.effectType === 'water') enemy.applyStatus('SOAKED', 0);
+                        else if (projectile.effectType === 'electric') enemy.applyStatus('SHOCK', finalDamage);
+                        else if (projectile.effectType === 'plant') {
+                            const ratio = GAME_SETTINGS.LEECH_RATIO || 0.02;
+                            const healPerTick = finalDamage * ratio; 
+                            enemy.applyStatus('LEECH', healPerTick);
+                            activeParticles.push(new ParticleEffect(enemy.positionX, enemy.positionY, "#2ecc71", 3));
+                        }
 
-                    if (projectile.pierceCount > 0) {
-                        projectile.pierceCount--;
-                    } else {
-                        projectile.isAlive = false;
-                        if (projectile.chainCount > 0) {
-                            let nearest = null;
-                            let minD = Infinity;
-                            const effectiveRange = (projectile.chainRange || 200) * (1.0 + (engineState.stats.chain_range_pct || 0));
-                            for (const other of activeEnemies) {
-                                if (other.id !== enemy.id && other.isActive && !projectile.hitTargetIds.has(other.id)) {
-                                     const d = Math.hypot(other.positionX - enemy.positionX, other.positionY - enemy.positionY);
-                                    if (d < effectiveRange && d < minD) {
-                                        minD = d;
-                                        nearest = other;
+                        if (projectile.pierceCount > 0) {
+                            projectile.pierceCount--;
+                        } else {
+                            projectile.isAlive = false;
+                            if (projectile.chainCount > 0) {
+                                let nearest = null;
+                                let minD = Infinity;
+                                const effectiveRange = (projectile.chainRange || 200) * (1.0 + (engineState.stats.chain_range_pct || 0));
+                                for (const other of activeEnemies) {
+                                    if (other.id !== enemy.id && other.isActive && !projectile.hitTargetIds.has(other.id)) {
+                                         const d = Math.hypot(other.positionX - enemy.positionX, other.positionY - enemy.positionY);
+                                        if (d < effectiveRange && d < minD) {
+                                            minD = d;
+                                            nearest = other;
+                                        }
                                     }
                                 }
-                            }
 
-                            if (nearest) {
-                                const chainConfig = {
-                                    id: projectile.effectType, 
-                                    damage: projectile.damageValue * 0.8, 
-                                    speed: projectile.moveSpeed,       
-                                    color: EFFECT_CONSTANTS.COLOR_CHAIN,
-                                    level: 1,                          
-                                    chain_count: projectile.chainCount - 1,
-                                    chain_range: projectile.chainRange,
-                                    pierce_count: 0,
-                                    ignoreIds: projectile.hitTargetIds 
-                                };
-                                const chainProj = new MagicProjectile(enemy.positionX, enemy.positionY, nearest, chainConfig);
-                                activeProjectiles.push(chainProj);
-                                activeFloatingTexts.push(new FloatingText(enemy.positionX, enemy.positionY - 40, "CHAIN!", EFFECT_CONSTANTS.COLOR_CHAIN, 14));
-                            } else if (projectile.effectType === 'fireball') {
-                                applyAreaDamage(enemy.positionX, enemy.positionY, EFFECT_CONSTANTS.FIREBALL_RADIUS, finalDamage * 0.5, 'fireball');
-                            }
-                        } else {
-                            if (projectile.effectType === 'fireball') {
-                                applyAreaDamage(enemy.positionX, enemy.positionY, EFFECT_CONSTANTS.FIREBALL_RADIUS, finalDamage * 0.5, 'fireball');
+                                if (nearest) {
+                                    const chainConfig = {
+                                        id: projectile.effectType, 
+                                        damage: projectile.damageValue * 0.8, 
+                                        speed: projectile.moveSpeed,       
+                                        color: EFFECT_CONSTANTS.COLOR_CHAIN,
+                                        level: 1,                          
+                                        chain_count: projectile.chainCount - 1,
+                                        chain_range: projectile.chainRange,
+                                        pierce_count: 0,
+                                        ignoreIds: projectile.hitTargetIds,
+                                        sourceGemId: projectile.sourceGemId
+                                    };
+                                    const chainProj = new MagicProjectile(enemy.positionX, enemy.positionY, nearest, chainConfig);
+                                    activeProjectiles.push(chainProj);
+                                    activeFloatingTexts.push(new FloatingText(enemy.positionX, enemy.positionY - 40, "CHAIN!", EFFECT_CONSTANTS.COLOR_CHAIN, 14));
+                                } else if (projectile.effectType === 'fireball') {
+                                    applyAreaDamage(enemy.positionX, enemy.positionY, EFFECT_CONSTANTS.FIREBALL_RADIUS, finalDamage * 0.5, 'fireball');
+                                }
+                            } else {
+                                if (projectile.effectType === 'fireball') {
+                                    applyAreaDamage(enemy.positionX, enemy.positionY, EFFECT_CONSTANTS.FIREBALL_RADIUS, finalDamage * 0.5, 'fireball');
+                                }
                             }
                         }
-                    }
 
-                    if (enemy.health <= 0 && enemy.isActive) {
-                        handleEnemyDeath(enemy, isCrit, projectile.damageValue);
+                        if (enemy.health <= 0 && enemy.isActive) {
+                            handleEnemyDeath(enemy, isCrit, projectile.damageValue);
+                        }
                     }
-                }
+                });
             });
-        });
-        activeParticles.forEach(p => p.update());
-        activeFloatingTexts.forEach(t => t.update());
+            activeParticles.forEach(particleInstance => particleInstance.update());
+            activeShockwaves.forEach(shockwaveInstance => shockwaveInstance.update());
+            activeFloatingTexts.forEach(textInstance => textInstance.update());
 
-        activeEnemies = activeEnemies.filter(enemy => enemy.isActive);
-        activeProjectiles = activeProjectiles.filter(projectile => projectile.isAlive);
-        activeParticles = activeParticles.filter(p => p.life > 0);
-        activeFloatingTexts = activeFloatingTexts.filter(t => t.life > 0);
-        if (engineState.baseIntegrity <= 0) {
-            engineState.isGameOver = true;
+            activeEnemies = activeEnemies.filter(enemy => enemy.isActive);
+            activeProjectiles = activeProjectiles.filter(projectile => projectile.isAlive);
+            activeParticles = activeParticles.filter(particleInstance => particleInstance.life > 0);
+            activeShockwaves = activeShockwaves.filter(shockwaveInstance => shockwaveInstance.currentLife > 0);
+            activeFloatingTexts = activeFloatingTexts.filter(textInstance => textInstance.life > 0);
+            if (engineState.baseIntegrity <= 0) {
+                // Artifact: Phoenix Core (One-time revive)
+                const phoenixIdx = engineState.artifacts.findIndex(a => a.id === 'phoenix_core');
+                if (phoenixIdx !== -1) {
+                    engineState.artifacts.splice(phoenixIdx, 1); // 消費
+                    const maxHP = GAME_SETTINGS.BASE_MAX_HP + engineState.stats.hp_max;
+                    engineState.baseIntegrity = maxHP * 0.3;
+                    triggerScreenShake(30, 15);
+                    activeFloatingTexts.push(new FloatingText(RENDER_CONSTANTS.TURRET_POS_X, GAME_SETTINGS.CASTLE_Y - 100, "PHOENIX REBIRTH!", "#fab1a0", 40));
+                    audioManager.play('LEVELUP');
+                } else {
+                    engineState.isGameOver = true;
+                }
+            }
         }
     }
+
+    // Background Update
+    if (starField) starField.update(engineState.currentWaveNumber);
+
     renderScene();
 
     if (engineState.inventoryDirty) {
@@ -2951,9 +3363,16 @@ function renderScene() {
         const dy = (Math.random() - 0.5) * shakeIntensity;
         gameContext.translate(dx, dy);
     }
-    
-    gameContext.fillStyle = "#1e272e";
-    gameContext.fillRect(0, 0, gameCanvas.width, gameCanvas.height);
+
+    // Draw Dynamic Starfield Background
+    if (starField) {
+        starField.draw(gameContext, engineState.currentWaveNumber);
+    } else {
+        gameContext.fillStyle = "#1e272e";
+        gameContext.fillRect(0, 0, gameCanvas.width, gameCanvas.height);
+    }
+
+    // Draw Ground (Castle Area)
     gameContext.fillStyle = "#2c3e50";
     gameContext.fillRect(0, GAME_SETTINGS.CASTLE_Y, gameCanvas.width, gameCanvas.height - GAME_SETTINGS.CASTLE_Y);
 
@@ -3030,18 +3449,25 @@ function renderScene() {
     const tx = RENDER_CONSTANTS.TURRET_POS_X;
     const ty = RENDER_CONSTANTS.TURRET_POS_Y;
 
-    // --- Enhanced Turret Drawing ---
+    // --- Enhanced Turret Drawing (Image Support) ---
     gameContext.save();
     gameContext.translate(tx, ty);
 
-    // 1. Turret Base (Fixed Dome)
-    gameContext.beginPath();
-    gameContext.arc(0, 10, 25, Math.PI, 0); 
-    gameContext.fillStyle = "#2c3e50";
-    gameContext.fill();
-    gameContext.strokeStyle = "#555";
-    gameContext.lineWidth = 2;
-    gameContext.stroke();
+    // 1. Turret Base (Fixed)
+    if (GAME_ASSETS.BASE) {
+        // 画像がある場合 (少し大きめに描画)
+        const baseSize = 80; 
+        gameContext.drawImage(GAME_ASSETS.BASE, -baseSize/2, -baseSize/2, baseSize, baseSize);
+    } else {
+        // Fallback: Canvas Drawing
+        gameContext.beginPath();
+        gameContext.arc(0, 10, 25, Math.PI, 0); 
+        gameContext.fillStyle = "#2c3e50";
+        gameContext.fill();
+        gameContext.strokeStyle = "#555";
+        gameContext.lineWidth = 2;
+        gameContext.stroke();
+    }
 
     // 2. Rotating Barrel
     let angle = -Math.PI / 2; 
@@ -3050,7 +3476,6 @@ function renderScene() {
     if (aimingTarget) {
         angle = Math.atan2(aimingTarget.positionY - ty, aimingTarget.positionX - tx);
     } else if (engineState.manualTargetId) {
-        // Fallback for manual target logic if getTarget returns null
         const mTarget = activeEnemies.find(e => e.id === engineState.manualTargetId);
         if (mTarget) angle = Math.atan2(mTarget.positionY - ty, mTarget.positionX - tx);
     } else {
@@ -3058,43 +3483,64 @@ function renderScene() {
         angle = -Math.PI / 2 + Math.sin(Date.now() / 1000) * 0.1;
     }
 
+    // Apply Rotation
     gameContext.rotate(angle);
+    // 画像素材が「上向き(270度)」であると仮定し、Canvasの「右向き(0度)」に合わせるため+90度回転補正
+    gameContext.rotate(Math.PI / 2);
 
-    // Recoil Animation
+    // Recoil Animation (Y軸方向に後退)
     const recoil = (attackCooldownCounter < 4) ? (4 - attackCooldownCounter) * 2 : 0;
 
-    // Barrel Body
-    gameContext.fillStyle = "#34495e";
-    gameContext.fillRect(0, -10, 45 - recoil, 20); 
+    // Select Barrel Image
+    let barrelImg = null;
+    if (equippedActive) {
+        switch (equippedActive.id) {
+            case 'fireball': barrelImg = GAME_ASSETS.BARREL_FIREBALL; break;
+            case 'nova':     barrelImg = GAME_ASSETS.BARREL_NOVA; break;
+            case 'arrow':    barrelImg = GAME_ASSETS.BARREL_ARROW; break;
+            case 'poison':   barrelImg = GAME_ASSETS.BARREL_POISON; break;
+            case 'rock':     barrelImg = GAME_ASSETS.BARREL_ROCK; break;
+            case 'psychic':  barrelImg = GAME_ASSETS.BARREL_PSYCHIC; break;
+            case 'water':    barrelImg = GAME_ASSETS.BARREL_WATER; break;
+            case 'electric': barrelImg = GAME_ASSETS.BARREL_ELECTRIC; break;
+            case 'plant':    barrelImg = GAME_ASSETS.BARREL_PLANT; break;
+            default:         barrelImg = GAME_ASSETS.BARREL_FIREBALL; break; 
+        }
+    }
 
-    // Colored Stripe (Weapon Type Indicator)
-    gameContext.fillStyle = turretColor;
-    gameContext.shadowColor = turretColor;
-    gameContext.shadowBlur = 10;
-    gameContext.fillRect(10, -6, 25 - recoil, 12);
-    gameContext.shadowBlur = 0;
+    if (barrelImg) {
+        const bSize = 64;
+        // Recoil logic: 画像描画位置をずらす (回転しているのでY軸が砲身の後ろ方向)
+        gameContext.drawImage(barrelImg, -bSize/2, -bSize/2 + recoil, bSize, bSize);
+    } else {
+        // Fallback: Canvas Drawing
+        // 回転補正を戻す
+        gameContext.rotate(-Math.PI / 2);
 
-    // Muzzle
-    gameContext.fillStyle = "#7f8c8d";
-    gameContext.fillRect(40 - recoil, -12, 8, 24);
+        // Barrel Body
+        gameContext.fillStyle = "#34495e";
+        gameContext.fillRect(0, -10, 45 - recoil, 20); 
 
-    // 3. Central Pivot (On top)
-    gameContext.rotate(-angle); // Cancel rotation for the core
-    gameContext.beginPath();
-    gameContext.arc(0, 0, 12, 0, Math.PI * 2);
-    gameContext.fillStyle = "#bdc3c7";
-    gameContext.fill();
-    gameContext.strokeStyle = "#2c3e50";
-    gameContext.stroke();
+        // Colored Stripe
+        gameContext.fillStyle = turretColor;
+        gameContext.shadowColor = turretColor;
+        gameContext.shadowBlur = 10;
+        gameContext.fillRect(10, -6, 25 - recoil, 12);
+        gameContext.shadowBlur = 0;
 
-    // Core Light
-    gameContext.beginPath();
-    gameContext.arc(0, 0, 6, 0, Math.PI * 2);
-    gameContext.fillStyle = turretColor;
-    gameContext.shadowColor = turretColor;
-    gameContext.shadowBlur = 15;
-    gameContext.fill();
-    gameContext.shadowBlur = 0;
+        // Muzzle
+        gameContext.fillStyle = "#7f8c8d";
+        gameContext.fillRect(40 - recoil, -12, 8, 24);
+
+        // Core Light
+        gameContext.beginPath();
+        gameContext.arc(0, 0, 6, 0, Math.PI * 2);
+        gameContext.fillStyle = turretColor;
+        gameContext.shadowColor = turretColor;
+        gameContext.shadowBlur = 15;
+        gameContext.fill();
+        gameContext.shadowBlur = 0;
+    }
 
     gameContext.restore();
 
@@ -3103,15 +3549,17 @@ function renderScene() {
     engineState.activeSupportUnits.forEach(unit => unit.draw(gameContext));
     activeEnemies.forEach(enemy => enemy.draw(gameContext));
     activeProjectiles.forEach(projectile => projectile.draw(gameContext));
-    activeEnemyProjectiles.forEach(ep => ep.draw(gameContext));
-    activeParticles.forEach(particle => particle.draw(gameContext));
-    activeFloatingTexts.forEach(text => text.draw(gameContext));
+    activeEnemyProjectiles.forEach(enemyProjectileInstance => enemyProjectileInstance.draw(gameContext));
+    activeParticles.forEach(particleInstance => particleInstance.draw(gameContext));
+    activeShockwaves.forEach(shockwaveInstance => shockwaveInstance.draw(gameContext));
+    activeFloatingTexts.forEach(textInstance => textInstance.draw(gameContext));
     
     gameContext.restore();
     updateHudDisplay();
 }
 
 function displayGameOver() {
+    audioManager.stopBgm();
     gameContext.save();
     gameContext.fillStyle = "rgba(0,0,0,0.85)";
     gameContext.fillRect(0, 0, gameCanvas.width, gameCanvas.height);
@@ -3132,6 +3580,8 @@ function addExperience(value) {
         engineState.currentLevel++;
         engineState.skillPoints++; 
 
+        audioManager.play('LEVELUP');
+
         // [Patch] Trigger New Upgrade UI
         activeFloatingTexts.push(new FloatingText(GAME_SETTINGS.SCREEN_WIDTH/2, GAME_SETTINGS.SCREEN_HEIGHT/2 - 100, `レベルアップ！`, "#f1c40f", 30));
         triggerScreenShake(10, 5);
@@ -3143,39 +3593,66 @@ function addExperience(value) {
     }
 }
 
-function generateDrop(x, y) {
+/**
+ * 敵撃破時のアイテム/ゴールドドロップ生成
+ * @param {number} positionX - 生成X座標
+ * @param {number} positionY - 生成Y座標
+ */
+function generateDrop(positionX, positionY) {
+    // 1. ゴールドドロップ判定
     if (Math.random() < (GAME_SETTINGS.GOLD_DROP_CHANCE || 0.4)) {
-        engineState.activeDrops.push(new DropItem(x, y, MISC_ITEMS.GOLD));
-    } else {
-        const pool = [];
-        const allItems = [...Object.values(GEMS), ...Object.values(ARTIFACTS)];
-        pool.push(...allItems);
-        const equippedIds = engineState.equippedGems.filter(g => g).map(g => g.id);
-        if (engineState.altGems) equippedIds.push(...engineState.altGems.filter(g => g).map(g => g.id));
-
-        allItems.forEach(item => {
-            if (equippedIds.includes(item.id)) {
-                for(let i=0; i<5; i++) pool.push(item);
-            }
-        });
-        const baseTemplate = pool[Math.floor(Math.random() * pool.length)];
-
-        let level = 1;
-        const wave = engineState.currentWaveNumber;
-        const r = Math.random();
-
-        // [Patch] Dynamic Drop Rates (Scale with Wave)
-        // Wave 10以降からLv3が出始め、最大20%まで上昇
-        const chanceLv3 = Math.min(0.20, Math.max(0, (wave - 10) * 0.02));
-        // Wave 3以降からLv2が出始め、最大40%まで上昇
-        const chanceLv2 = Math.min(0.40, Math.max(0, (wave - 3) * 0.03));
-
-        if (r < chanceLv3) level = 3;
-        else if (r < chanceLv3 + chanceLv2) level = 2;
-
-        const dropTemplate = { ...baseTemplate, forcedLevel: level };
-        engineState.activeDrops.push(new DropItem(x, y, dropTemplate));
+        engineState.activeDrops.push(new DropItem(positionX, positionY, MISC_ITEMS.GOLD));
+        return;
     }
+
+    // 2. アイテムドロッププールの構築
+    const itemPool = [];
+    const allTemplates = [...Object.values(GEMS), ...Object.values(ARTIFACTS)];
+
+    // 現在の装備状況を確認
+    const currentEquippedItems = [...engineState.equippedGems, ...engineState.altGems].filter(itemInstance => itemInstance !== null);
+    const equippedActiveGems = currentEquippedItems.filter(itemInstance => itemInstance.type === GEM_TYPES.ACTIVE);
+    const equippedItemIds = currentEquippedItems.map(itemInstance => itemInstance.id);
+
+    // アクティブGEMが2つ以上装備されているか（ビルドの方向性が決まっているか）
+    const isBuildEstablished = equippedActiveGems.length >= 2;
+
+    allTemplates.forEach(template => {
+        // 全アイテムをプールに入れる。
+        // サポートGEMは種類が少ないため、ベースの重みを増やす(1->3)
+        const baseWeight = (template.type === GEM_TYPES.SUPPORT) ? 3 : 1;
+        for (let count = 0; count < baseWeight; count++) {
+            itemPool.push(template);
+        }
+
+        // 装備中のアイテム（Active/Support問わず）の重みを大幅に増やす
+        // ビルド確定（Active2種以上）ならさらに強力なボーナス
+        if (equippedItemIds.includes(template.id)) {
+            const weightBonus = isBuildEstablished ? 15 : 8; 
+            for (let count = 0; count < weightBonus; count++) {
+                itemPool.push(template);
+            }
+        }
+    });
+
+    const selectedTemplate = itemPool[Math.floor(Math.random() * itemPool.length)];
+
+    // 3. ドロップレベルの決定
+    let dropLevel = 1;
+    const currentWave = engineState.currentWaveNumber;
+    const levelRoll = Math.random();
+
+    const chanceLevel3 = Math.min(0.20, Math.max(0, (currentWave - 10) * 0.02));
+    const chanceLevel2 = Math.min(0.40, Math.max(0, (currentWave - 3) * 0.03));
+
+    if (levelRoll < chanceLevel3) {
+        dropLevel = 3;
+    } else if (levelRoll < (chanceLevel3 + chanceLevel2)) {
+        dropLevel = 2;
+    }
+
+    const finalItemTemplate = { ...selectedTemplate, forcedLevel: dropLevel };
+    engineState.activeDrops.push(new DropItem(positionX, positionY, finalItemTemplate));
 }
 
 window.addEventListener('keydown', (e) => {
@@ -3192,7 +3669,16 @@ window.isGameRunning = false;
 window.startGame = function() {
     // Show Crew Selection first
     if (window.showCrewSelection) {
-        window.showCrewSelection((selectedCrewIds, startGem) => {
+        window.showCrewSelection(async (selectedCrewIds, startGem) => {
+            // Loading Indication
+            if (window.showToast) window.showToast("SYSTEM BOOT...", "#66fcf1");
+
+            // Load Assets Wait
+            await Promise.all([
+                loadGameAssets(),
+                audioManager.load()
+            ]);
+
             const title = document.getElementById('title-screen');
             if (title) title.classList.add('hidden');
 
@@ -3205,11 +3691,16 @@ window.startGame = function() {
             engineState.addItemToInventory(startGem);
             engineState.equipItem(engineState.inventory[0].uuid, 0);
 
+            // Start BGM
+            audioManager.playBgm('BGM_EARLY');
+
             activeEnemies = [];
             activeProjectiles = [];
             activeEnemyProjectiles = [];
             activeParticles = [];
             activeFloatingTexts = [];
+            // Reset Background
+            starField = new StarField(GAME_SETTINGS.SCREEN_WIDTH, GAME_SETTINGS.SCREEN_HEIGHT);
 
             refreshInventoryInterface();
             if(window.updateArtifactHud) window.updateArtifactHud();
@@ -3225,214 +3716,53 @@ window.startGame = function() {
     }
 };
 
-/* =========================================
-   ULTIMATE CONFIG MANAGER (V3) - Enemy Stats Edition
-   ========================================= */
+/**
+ * デバッグ用：最強状態で最終WAVEから開始
+ */
+window.debugStartGame = function() {
+    if (window.showCrewSelection) {
+        window.showCrewSelection(async (selectedCrewIds, startGem) => {
+            if (window.showToast) window.showToast("DEBUG MODE ACTIVATED", "#e74c3c");
+            await Promise.all([loadGameAssets(), audioManager.load()]);
 
-class ConfigManager {
-    constructor() {
-        this.storageKey = 'PROJECT_OVERLORD_CONFIG_ULTIMATE';
-        this.isVisible = false;
-        this.init();
-    }
+            const title = document.getElementById('title-screen');
+            if (title) title.classList.add('hidden');
 
-    init() {
-        // 1. Inject Default Settings if missing
-        if (GAME_SETTINGS.ROCK_SPIKES_BASE === undefined) GAME_SETTINGS.ROCK_SPIKES_BASE = 3;
-        if (GAME_SETTINGS.ROCK_SPIKES_VAR === undefined) GAME_SETTINGS.ROCK_SPIKES_VAR = 3;
-        if (GAME_SETTINGS.LEECH_RATIO === undefined) GAME_SETTINGS.LEECH_RATIO = 0.02;
-        if (GAME_SETTINGS.ENEMY_BASE_HP === undefined) GAME_SETTINGS.ENEMY_BASE_HP = 60;
-        if (GAME_SETTINGS.ENEMY_PROJECTILE_DAMAGE === undefined) GAME_SETTINGS.ENEMY_PROJECTILE_DAMAGE = 15;
+            engineState.reset();
+            engineState.selectedCrew = selectedCrewIds;
 
-        // 2. Load Saved Data
-        this.load();
+            // --- デバッグ用チートステータス ---
+            engineState.currentLevel = 50;
+            engineState.skillPoints = 100;
+            engineState.currentWaveNumber = 10; // 最終WAVE
+            engineState.gold = 99999;
+            engineState.bonusStats.damage_pct = 10.0; // 攻撃力 +1000%
+            engineState.bonusStats.rate_pct = 5.0;   // 攻撃速度 +500%
+            engineState.bonusStats.hp_max = 5000;    // HP超強化
+            engineState.baseIntegrity = 5000 + GAME_SETTINGS.BASE_MAX_HP;
 
-        // 3. Create UI
-        this.createUI();
-        console.log("Ultimate ConfigManager V3 Initialized");
-    }
+            engineState.recalcStats();
+            engineState.addItemToInventory(startGem, 5); // 最初からLv.5
+            engineState.equipItem(engineState.inventory[0].uuid, 0);
 
-    load() {
-        const saved = localStorage.getItem(this.storageKey);
-        if (saved) {
-            try {
-                const data = JSON.parse(saved);
-                if (data.gems) {
-                    Object.keys(data.gems).forEach(key => {
-                        if (GEMS[key]) Object.assign(GEMS[key], data.gems[key]);
-                    });
-                }
-                if (data.settings) Object.assign(GAME_SETTINGS, data.settings);
-                if (data.effects) Object.assign(EFFECT_CONSTANTS, data.effects);
-                // Load Enemy Tiers
-                if (data.enemies) {
-                    Object.keys(data.enemies).forEach(key => {
-                        if (ENEMY_TIERS[key]) Object.assign(ENEMY_TIERS[key], data.enemies[key]);
-                    });
-                }
-                console.log("Config loaded.");
-            } catch (e) {
-                console.error("Failed to load config", e);
-            }
-        }
-    }
+            // BGM再生
+            audioManager.playBgm('BGM_LATE');
 
-    save() {
-        const data = {
-            gems: GEMS,
-            settings: GAME_SETTINGS,
-            effects: EFFECT_CONSTANTS,
-            enemies: ENEMY_TIERS
-        };
-        localStorage.setItem(this.storageKey, JSON.stringify(data));
-        activeFloatingTexts.push(new FloatingText(GAME_SETTINGS.SCREEN_WIDTH/2, GAME_SETTINGS.SCREEN_HEIGHT/2, "CONFIG SAVED!", "#2ecc71", 30));
-    }
+            activeEnemies = [];
+            activeProjectiles = [];
+            activeEnemyProjectiles = [];
+            activeParticles = [];
+            activeFloatingTexts = [];
+            starField = new StarField(GAME_SETTINGS.SCREEN_WIDTH, GAME_SETTINGS.SCREEN_HEIGHT);
 
-    reset() {
-        if (confirm("Reset ALL settings to defaults? This will reload the page.")) {
-            localStorage.removeItem(this.storageKey);
-            location.reload();
-        }
-    }
+            refreshInventoryInterface();
+            if(window.updateArtifactHud) window.updateArtifactHud();
+            if(window.updateCrewHud) window.updateCrewHud();
 
-    createUI() {
-        const oldBtn = document.getElementById('config-btn');
-        if (oldBtn) oldBtn.remove();
-        const oldPanel = document.getElementById('config-panel');
-        if (oldPanel) oldPanel.remove();
-
-        const style = document.createElement('style');
-        style.textContent = `
-            #config-btn { position: absolute; top: 10px; right: 10px; z-index: 2000; background: #2c3e50; color: #00d2d3; border: 2px solid #00d2d3; padding: 5px 15px; cursor: pointer; font-family: monospace; font-weight: bold; box-shadow: 0 0 10px rgba(0,210,211,0.5); }
-            #config-panel { display: none; position: absolute; top: 50px; right: 10px; width: 420px; max-height: 85vh; overflow-y: auto; background: rgba(10, 10, 15, 0.95); border: 2px solid #00d2d3; z-index: 2000; padding: 15px; color: #fff; font-family: monospace; box-shadow: 0 0 20px rgba(0,0,0,0.8); }
-            .cfg-section { margin-bottom: 20px; border-bottom: 1px solid #444; padding-bottom: 10px; }
-            .cfg-header { font-size: 16px; font-weight: bold; color: #00d2d3; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 1px; }
-            .cfg-sub-header { font-size: 14px; font-weight: bold; color: #f1c40f; margin-top: 10px; margin-bottom: 5px; border-left: 3px solid #f1c40f; padding-left: 5px; }
-            .cfg-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; padding: 2px 0; }
-            .cfg-row:hover { background: rgba(255,255,255,0.05); }
-            .cfg-row label { font-size: 12px; color: #bdc3c7; flex: 1; }
-            .cfg-row input { width: 80px; background: #222; border: 1px solid #555; color: #fff; padding: 2px 5px; text-align: right; font-family: monospace; }
-            .cfg-actions { display: flex; gap: 10px; margin-top: 20px; position: sticky; bottom: 0; background: rgba(10,10,15,0.9); padding: 10px 0; border-top: 1px solid #444; }
-            .cfg-btn { flex: 1; padding: 8px; cursor: pointer; border: none; color: #fff; font-weight: bold; transition: 0.2s; }
-            .cfg-btn.save { background: #27ae60; } .cfg-btn.save:hover { background: #2ecc71; }
-            .cfg-btn.reset { background: #c0392b; } .cfg-btn.reset:hover { background: #e74c3c; }
-            .cfg-btn.close { background: #7f8c8d; } .cfg-btn.close:hover { background: #95a5a6; }
-        `;
-        document.head.appendChild(style);
-
-        const btn = document.createElement('button');
-        btn.id = 'config-btn';
-        btn.innerText = '⚙ CONFIG V3';
-        btn.onclick = () => this.togglePanel();
-        document.body.appendChild(btn);
-
-        this.panel = document.createElement('div');
-        this.panel.id = 'config-panel';
-        document.body.appendChild(this.panel);
-
-        this.renderContent();
-    }
-
-    renderContent() {
-        let html = '';
-
-        // 1. GAME SETTINGS
-        html += `<div class="cfg-section"><div class="cfg-header">Game Settings</div>`;
-        Object.keys(GAME_SETTINGS).forEach(key => {
-            if (typeof GAME_SETTINGS[key] === 'number') {
-                html += this.createInputRow('GAME_SETTINGS', key, GAME_SETTINGS[key]);
+            if (!window.isGameRunning) {
+                window.isGameRunning = true;
+                mainLoop();
             }
         });
-        html += `</div>`;
-
-        // 2. ENEMY TIERS (New!)
-        html += `<div class="cfg-section"><div class="cfg-header">Enemy Tiers</div>`;
-        Object.keys(ENEMY_TIERS).forEach(tierKey => {
-            const tier = ENEMY_TIERS[tierKey];
-            html += `<div class="cfg-sub-header">${tierKey} (${tier.id})</div>`;
-            Object.keys(tier).forEach(prop => {
-                if (typeof tier[prop] === 'number') {
-                    html += this.createInputRow(`ENEMY_TIERS.${tierKey}`, prop, tier[prop]);
-                }
-            });
-        });
-        html += `</div>`;
-
-        // 3. EFFECT CONSTANTS
-        html += `<div class="cfg-section"><div class="cfg-header">Effect Constants</div>`;
-        Object.keys(EFFECT_CONSTANTS).forEach(key => {
-             if (typeof EFFECT_CONSTANTS[key] === 'number') {
-                html += this.createInputRow('EFFECT_CONSTANTS', key, EFFECT_CONSTANTS[key]);
-            }
-        });
-        html += `</div>`;
-
-        // 4. GEMS
-        html += `<div class="cfg-section"><div class="cfg-header">Skill Parameters</div>`;
-        Object.values(GEMS).forEach(gem => {
-            html += `<div class="cfg-sub-header">${gem.name} (${gem.id})</div>`;
-            Object.keys(gem).forEach(prop => {
-                if (typeof gem[prop] === 'number') {
-                    html += this.createInputRow(`GEMS.${gem.id}`, prop, gem[prop]);
-                }
-            });
-        });
-        html += `</div>`;
-
-        // Actions
-        html += `
-            <div class="cfg-actions">
-                <button class="cfg-btn save" onclick="configManager.save()">SAVE CONFIG</button>
-                <button class="cfg-btn reset" onclick="configManager.reset()">RESET DEFAULTS</button>
-                <button class="cfg-btn close" onclick="configManager.togglePanel()">CLOSE</button>
-            </div>
-        `;
-
-        this.panel.innerHTML = html;
     }
-
-    createInputRow(context, key, val) {
-        return `
-            <div class="cfg-row">
-                <label>${key}</label>
-                <input type="number" step="any" value="${val}" 
-                    onchange="configManager.updateValue('${context}', '${key}', this.value)">
-            </div>
-        `;
-    }
-
-    updateValue(context, key, val) {
-        const numVal = parseFloat(val);
-        if (isNaN(numVal)) return;
-
-        if (context === 'GAME_SETTINGS') {
-            GAME_SETTINGS[key] = numVal;
-        } else if (context === 'EFFECT_CONSTANTS') {
-            EFFECT_CONSTANTS[key] = numVal;
-        } else if (context.startsWith('GEMS.')) {
-            const gemId = context.split('.')[1];
-            const gemKey = Object.keys(GEMS).find(k => GEMS[k].id === gemId);
-            if (gemKey && GEMS[gemKey]) GEMS[gemKey][key] = numVal;
-        } else if (context.startsWith('ENEMY_TIERS.')) {
-            const tierKey = context.split('.')[1];
-            if (ENEMY_TIERS[tierKey]) ENEMY_TIERS[tierKey][key] = numVal;
-        }
-    }
-
-    togglePanel() {
-        this.isVisible = !this.isVisible;
-        this.panel.style.display = this.isVisible ? 'block' : 'none';
-        
-        if (this.isVisible) {
-            this.renderContent(); 
-            this.isPausedCache = engineState.isPaused;
-            engineState.isPaused = true;
-        } else {
-            engineState.isPaused = this.isPausedCache || false;
-        }
-    }
-}
-
-// Instantiate
-if (window.configManager) delete window.configManager;
-window.configManager = new ConfigManager();
+};

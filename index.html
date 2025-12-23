@@ -7,6 +7,42 @@
     <script src="https://unpkg.com/blockly/blockly.min.js"></script>
     <script src="https://unpkg.com/blockly/javascript_compressed.js"></script>
     <style>
+        /* --- Quick Buy Buttons --- */
+        .quick-buy-container {
+            position: absolute;
+            top: 705px; /* 砲台の土台(720px)の高さに合わせる */
+            display: flex;
+            flex-direction: row; /* 水平に並べる */
+            gap: 12px;
+            z-index: 45;
+            pointer-events: none;
+        }
+        /* 砲台(中心300px)の左右に適切に配置 */
+        #quick-buy-left { right: 350px; } 
+        #quick-buy-right { left: 350px; }
+
+        .quick-btn {
+            width: 44px; height: 44px; /* サイズをコンパクトに */
+            background: rgba(11, 12, 16, 0.85);
+            border: 1px solid var(--accent-cyan);
+            border-radius: 50%;
+            display: flex;
+            flex-direction: column;
+            align-items: center; justify-content: center;
+            cursor: pointer;
+            pointer-events: auto;
+            transition: 0.2s;
+            box-shadow: 0 0 12px rgba(102, 252, 241, 0.2);
+            position: relative;
+        }
+        .quick-btn:active { transform: scale(0.9); }
+        .quick-btn.disabled {
+            filter: grayscale(1) opacity(0.4);
+            border-color: #555;
+            cursor: not-allowed;
+        }
+        .quick-btn .icon { font-size: 22px; } /* アイコンを少しだけ大きく */
+
         :root {
             --bg-color: #0b0c10;
             --panel-bg: #1f2833;
@@ -289,6 +325,16 @@
         .selected-item { border-color: #f1c40f !important; box-shadow: 0 0 10px #f1c40f; animation: pulse 1s infinite; }
         @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.7; } 100% { opacity: 1; } }
 
+        /* Side Action Buttons (Pause, Swap) */
+        .side-hud-btn {
+            position: absolute; width: 44px; height: 44px;
+            background: rgba(0,0,0,0.6); border: 2px solid #fff; color: #fff;
+            border-radius: 50%; display: flex; align-items: center; justify-content: center;
+            font-size: 20px; cursor: pointer; z-index: 90; transition: 0.1s;
+            pointer-events: auto;
+        }
+        .side-hud-btn:active { transform: scale(0.9); background: rgba(255,255,255,0.2); }
+
         /* Action Menu for Touch */
         #action-menu {
             position: absolute; background: #222; border: 1px solid #66fcf1;
@@ -348,6 +394,68 @@
         .help-title { color: #f1c40f; font-weight: bold; margin-bottom: 5px; }
         .help-desc { font-size: 12px; color: #ccc; line-height: 1.4; }
 
+        /* --- Arcade Style Cut-in Effect --- */
+        #cutin-overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none; z-index: 8000; overflow: hidden; display: none;
+        }
+        .cutin-banner {
+            position: absolute; top: 42%; left: -110%; width: 120%; height: 60px; /* 高さ半分 */
+            background: linear-gradient(90deg, transparent, rgba(0,210,211,0.6) 15%, rgba(0,210,211,0.6) 85%, transparent); /* 透過度アップ */
+            transform: skewX(-20deg);
+            display: flex; align-items: center;
+            box-shadow: 0 0 20px rgba(0,210,211,0.3);
+            border-top: 1px solid rgba(255,255,255,0.5); border-bottom: 1px solid rgba(255,255,255,0.5);
+        }
+        .cutin-image {
+            height: 140%; margin-left: 15%; margin-top: -10px; /* サイズ調整 */
+            filter: drop-shadow(0 0 8px #000);
+            image-rendering: pixelated;
+            transform: skewX(20deg);
+            opacity: 0.8;
+        }
+        .cutin-text-group {
+            margin-left: 15px; transform: skewX(20deg); color: #fff;
+            text-shadow: 0 0 8px #000;
+        }
+        .cutin-ability-name {
+            font-size: 20px; font-weight: 900; font-style: italic; /* コンパクトに */
+            letter-spacing: 1px; text-transform: uppercase;
+        }
+        .cutin-crew-name { font-size: 10px; opacity: 0.8; font-weight: bold; }
+
+        /* Animations */
+        @keyframes cutin-sequence {
+            0% { left: -110%; opacity: 0; }
+            15% { left: -10%; opacity: 1; }
+            85% { left: 0%; opacity: 1; }
+            100% { left: 110%; opacity: 0; }
+        }
+        .animate-cutin { animation: cutin-sequence 1.2s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+
+        /* Fuse Notification Banner */
+        #fuse-overlay {
+            position: absolute; top: 180px; left: 0; width: 100%;
+            pointer-events: none; z-index: 7000; display: none;
+        }
+        .fuse-banner {
+            background: linear-gradient(90deg, transparent, rgba(102, 252, 241, 0.2) 20%, rgba(102, 252, 241, 0.2) 80%, transparent);
+            border-top: 1px solid rgba(102, 252, 241, 0.5);
+            border-bottom: 1px solid rgba(102, 252, 241, 0.5);
+            height: 40px; display: flex; align-items: center; justify-content: center;
+            overflow: hidden; box-shadow: 0 0 20px rgba(102, 252, 241, 0.1);
+        }
+        .fuse-content { color: var(--accent-cyan); font-weight: bold; font-family: monospace; letter-spacing: 2px; font-size: 14px; text-shadow: 0 0 8px var(--accent-cyan); }
+        .fuse-level { color: var(--accent-gold); margin-left: 10px; font-size: 18px; }
+
+        @keyframes fuse-in {
+            0% { transform: scaleY(0); opacity: 0; }
+            10% { transform: scaleY(1); opacity: 1; }
+            90% { transform: scaleY(1); opacity: 1; }
+            100% { transform: scaleY(0); opacity: 0; }
+        }
+        .animate-fuse { animation: fuse-in 1.8s cubic-bezier(0.19, 1, 0.22, 1) forwards; }
+
     </style>
 </head>
 <body>
@@ -359,8 +467,9 @@
                 <div class="title-sub">Vertical Ops</div>
 
                 <div class="title-btn" onclick="startGame()">MISSION START</div>
+                <div class="title-btn" onclick="toggleMenu('synergy-modal')" style="border-color:#f1c40f; color:#f1c40f;">SYNERGY ARCHIVE</div>
                 <div class="title-btn" onclick="toggleMenu('help-modal')">TUTORIAL / HELP</div>
-                <div class="title-btn" onclick="configManager.togglePanel()">SYSTEM CONFIG</div>
+                <!-- <div class="title-btn" onclick="configManager.togglePanel()">SYSTEM CONFIG</div> -->
             </div>
             <div style="position:absolute; bottom:20px; width:100%; text-align:center; color:#555; font-size:10px;">
                 V3.0.0 - SYSTEM READY
@@ -369,9 +478,43 @@
 
         <canvas id="game-canvas" width="600" height="900"></canvas>
 
+        <!-- Quick Buy Buttons (Left) -->
+        <div id="quick-buy-left" class="quick-buy-container">
+            <div class="quick-btn" id="qbtn-repair" onclick="engineState.buyShopItem('repair')">
+                <span class="icon">🔧</span>
+            </div>
+            <div class="quick-btn" id="qbtn-drone_col" onclick="engineState.buyShopItem('drone_col')">
+                <span class="icon">🧹</span>
+            </div>
+        </div>
+
+        <!-- Quick Buy Buttons (Right) -->
+        <div id="quick-buy-right" class="quick-buy-container">
+            <div class="quick-btn" id="qbtn-drone_atk" onclick="engineState.buyShopItem('drone_atk')">
+                <span class="icon">🛸</span>
+            </div>
+            <div class="quick-btn" id="qbtn-clone" onclick="engineState.buyShopItem('clone')">
+                <span class="icon">👥</span>
+            </div>
+        </div>
+
         <!-- Artifacts HUD (Left Side) -->
         <div id="artifact-hud" style="position:absolute; top:80px; left:10px; width:40px; display:flex; flex-direction:column; gap:5px; pointer-events:auto; z-index:40;">
             <!-- Generated by JS -->
+        </div>
+
+        <!-- Speed Control Button (Top Right) -->
+        <div id="speed-btn" 
+             style="position:absolute; top:15px; right:15px; background:rgba(0,0,0,0.6); border:1px solid #7f8c8d; color:#fff; padding:5px 10px; border-radius:15px; font-size:12px; cursor:pointer; pointer-events:auto; z-index:100; user-select:none;"
+             onclick="window.engineState && window.engineState.toggleGameSpeed()">
+            ▶️ x1.0
+        </div>
+
+        <!-- BGM Toggle Button (Below Speed Button) -->
+        <div id="bgm-btn" 
+             style="position:absolute; top:50px; right:15px; background:rgba(0,0,0,0.6); border:1px solid #7f8c8d; color:#66fcf1; padding:5px 10px; border-radius:15px; font-size:12px; cursor:pointer; pointer-events:auto; z-index:100; user-select:none;"
+             onclick="window.toggleBgmState()">
+            ♫ ON
         </div>
 
         <div id="top-info">
@@ -407,23 +550,12 @@
                     <div class="hud-btn" onclick="toggleMenu('skill-tree-modal')">
                         🌲<span>ツリー</span>
                     </div>
-                    <div class="hud-btn" onclick="toggleMenu('logic-modal')">
-                        🤖<span>AI</span>
-                    </div>
                     <div class="hud-btn" onclick="toggleMenu('shop-modal')">
                         🛒<span>店</span>
                     </div>
                     <div class="hud-btn" onclick="toggleMenu('help-modal')" style="border-color:#f1c40f; color:#f1c40f;">
                         ?<span>ヘルプ</span>
                     </div>
-                </div>
-
-                <!-- On-Screen Loadout Swap -->
-                <div style="position:absolute; top:-30px; left:50%; transform:translateX(-50%); 
-                            background:#222; border:1px solid #444; color:#fff; padding:2px 10px; 
-                            font-size:10px; border-radius:10px; cursor:pointer; pointer-events:auto;"
-                     onclick="engineState.swapLoadout()">
-                    ♻ SWAP (Qキー)
                 </div>
             </div>
 
@@ -439,9 +571,11 @@
             </div>
         </div>
 
-        <div style="position:absolute; bottom:150px; right:10px; width:40px; height:40px; 
-             background:rgba(0,0,0,0.5); border:2px solid #fff; color:#fff; border-radius:50%; 
-             display:flex; align-items:center; justify-content:center; font-size:20px; cursor:pointer; z-index:90;"
+        <!-- Side HUD Buttons: Swap (Left) and Pause (Right) -->
+        <div class="side-hud-btn" style="bottom:150px; left:10px; border-color:#00d2d3; color:#00d2d3;"
+             onclick="engineState.swapLoadout()">♻️</div>
+
+        <div class="side-hud-btn" style="bottom:150px; right:10px;"
              onclick="engineState.togglePause()">⏸</div>
 
         <div id="upgrade-selection-modal" class="modal-overlay hidden">
@@ -464,6 +598,7 @@
         <div id="skill-tree-modal" class="modal-overlay hidden">
             <div class="modal-header">
                 <div class="modal-title">スキルツリー</div>
+                <div id="tree-sp-info" style="color: #00d2d3; font-weight: bold; font-size: 14px; margin-left: auto; margin-right: 15px;">SP: 0</div>
                 <button class="close-btn" onclick="toggleMenu('skill-tree-modal')">×</button>
             </div>
             <div id="skill-tree-viewport">
@@ -485,14 +620,52 @@
             </div>
         </div>
 
+        <div id="fuse-overlay">
+            <div class="fuse-banner" id="fuse-banner">
+                <div class="fuse-content">
+                    <span id="fuse-item-name">FIREBALL</span>
+                    <span class="fuse-text">UPGRADED</span>
+                    <span class="fuse-level" id="fuse-item-lv">Lv.2</span>
+                </div>
+            </div>
+        </div>
+
         <div id="shop-modal" class="modal-overlay hidden">
             <div class="modal-header">
                 <div class="modal-title" style="color:#f1c40f;">お店</div>
+                <div id="shop-gold-info" style="color: #f1c40f; font-weight: bold; font-size: 14px; margin-left: auto; margin-right: 15px;">💰 0</div>
                 <button class="close-btn" onclick="toggleMenu('shop-modal')">×</button>
             </div>
             <div class="modal-content">
                 <div id="shop-message" style="background:#222; padding:10px; border-radius:4px; font-size:12px; margin-bottom:10px;">いらっしゃいませ...</div>
                 <div id="shop-grid"></div>
+            </div>
+        </div>
+
+        <!-- Special Move Cut-in Overlay -->
+        <div id="cutin-overlay">
+            <div class="cutin-banner" id="cutin-banner">
+                <img src="" class="cutin-image" id="cutin-img">
+                <div class="cutin-text-group">
+                    <div class="cutin-crew-name" id="cutin-crew-name">COMMANDER</div>
+                    <div class="cutin-ability-name" id="cutin-ability">ULTIMATE SKILL</div>
+                </div>
+            </div>
+        </div>
+
+        <div id="synergy-modal" class="modal-overlay hidden">
+            <div class="modal-header">
+                <div class="modal-title" style="color:#f1c40f;">シナジー図鑑</div>
+                <button class="close-btn" onclick="toggleMenu('synergy-modal')">×</button>
+            </div>
+            <div class="modal-content">
+                <div style="font-size:12px; color:#aaa; margin-bottom:15px; border-left:3px solid #f1c40f; padding-left:10px;">
+                    属性を組み合わせて発見した特殊反応の記録です。<br>
+                    実戦で一度でも発動させると詳細がアンロックされます。
+                </div>
+                <div id="synergy-list" style="display:flex; flex-direction:column; gap:10px;">
+                    <!-- JS generated items -->
+                </div>
             </div>
         </div>
 
@@ -547,6 +720,8 @@
         </div>
     </div>
     
+    <script type="module" src="config-manager.js"></script>
+    <script type="module" src="audio-manager.js"></script>
     <script type="module" src="game.js"></script>
     <script src="blocks.js"></script>
     <script>

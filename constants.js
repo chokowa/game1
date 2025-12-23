@@ -8,10 +8,10 @@ export const GAME_SETTINGS = {
     SCREEN_WIDTH: 600,
     SCREEN_HEIGHT: 900,
     BASE_MAX_HP: 800,       // 500 -> 800
-    XP_PER_LEVEL_BASE: 300, // 120 -> 300: 初期レベルアップを遅くする (約10秒目標)
-    XP_SCALING: 1.5,        // 1.8 -> 1.5: 後半の必要XPインフレを少し緩やかにする
-    DROP_CHANCE: 0.3,       // 0.25 -> 0.3
-  
+    XP_PER_LEVEL_BASE: 500, // 800 -> 500: 初期テンポ改善（約30秒でLvUP）
+    XP_SCALING: 1.35,       // 1.25 -> 1.35: 後半の必要XP上昇率を微増
+    DROP_CHANCE: 0.25,      // 0.3 -> 0.25: 全体のドロップ頻度を抑制
+
     CASTLE_Y: 720,          // 800 -> 720: UI被り防止のため砲台位置を上げる
     CASTLE_DAMAGE: 30,      // 50 -> 30
     INVENTORY_CAPACITY: 40,
@@ -71,37 +71,68 @@ export const ARTIFACT_TYPES = {
 
 export const BOSS_ARTIFACTS = {
     // A. Standard Stats
-    BERSERKER_HELM: { id: 'berserker_helm', name: '狂戦士の兜', icon: '⛑️', desc: 'HP減少率に応じて攻撃力UP (最大+50%)', type: 'BOSS_ARTIFACT', color: '#c0392b' },
-    ANCIENT_COIN:   { id: 'ancient_coin',   name: '古代のコイン', icon: '🪙', desc: '敵撃破時 5%でGold獲得', type: 'BOSS_ARTIFACT', color: '#f1c40f' },
-    VAMPIRE_CUP:    { id: 'vampire_cup',    name: '吸血鬼の杯', icon: '🍷', desc: '撃破時HP1%回復', type: 'BOSS_ARTIFACT', color: '#8e44ad' },
-    SNIPER_SCOPE:   { id: 'sniper_scope',   name: 'スナイパースコープ', icon: '🔭', desc: '遠距離(Y<400)の敵へダメ+30%', type: 'BOSS_ARTIFACT', color: '#2ecc71' },
+    BERSERKER_HELM: { id: 'berserker_helm', name: '狂戦士の兜', icon: '⛑️', desc: 'HP減少率に応じて攻撃力UP (最大+50%)', type: 'BOSS_ARTIFACT', color: '#c0392b', config: { max_bonus: 0.5 } },
+    ANCIENT_COIN:   { id: 'ancient_coin',   name: '古代のコイン', icon: '🪙', desc: '敵撃破時 5%でGold獲得', type: 'BOSS_ARTIFACT', color: '#f1c40f', config: { chance: 0.05, amount: 10 } },
+    VAMPIRE_CUP:    { id: 'vampire_cup',    name: '吸血鬼の杯', icon: '🍷', desc: '撃破時HP1%回復', type: 'BOSS_ARTIFACT', color: '#8e44ad', config: { heal_pct: 0.01 } },
+    SNIPER_SCOPE:   { id: 'sniper_scope',   name: 'スナイパースコープ', icon: '🔭', desc: '遠距離(Y<400)の敵へダメ+30%', type: 'BOSS_ARTIFACT', color: '#2ecc71', config: { range_y: 400, multiplier: 1.3 } },
     INF_BATTERY:    { id: 'inf_battery',    name: '無限電池', icon: '🔋', desc: 'MP回復速度 +50%', type: 'BOSS_ARTIFACT', color: '#66fcf1', stats: { mp_regen_pct: 0.5 } },
 
     // B. Defense / Shield
     SPIKE_SHIELD:   { id: 'spike_shield',   name: 'スパイクシールド', icon: '🛡️', desc: 'シールドバッシュ威力+100%', type: 'BOSS_ARTIFACT', color: '#95a5a6', stats: { shield_bash_mul: 1.0 } },
-    MANA_CONV:      { id: 'mana_conv',      name: 'マナ変換器', icon: '♻️', desc: 'ジャストガード時 HP20回復', type: 'BOSS_ARTIFACT', color: '#3498db' },
+    MANA_CONV:      { id: 'mana_conv',      name: 'マナ変換器', icon: '♻️', desc: 'ジャストガード時 HP20回復', type: 'BOSS_ARTIFACT', color: '#3498db', config: { heal_amount: 20 } },
     EMERGENCY_CORE: { id: 'emergency_core', name: '緊急コア', icon: '🚨', desc: 'HP30%以下で自動シールド(60秒CT)', type: 'BOSS_ARTIFACT', color: '#e74c3c' },
     REFLECT_PRISM:  { id: 'reflect_prism',  name: '反射プリズム', icon: '💎', desc: 'ジャストガード時 爆発発生', type: 'BOSS_ARTIFACT', color: '#a29bfe' },
     GRAVITY_ANCHOR: { id: 'gravity_anchor', name: '重力アンカー', icon: '⚓', desc: 'シールド中、敵速度激減', type: 'BOSS_ARTIFACT', color: '#2c3e50' },
 
     // C. Offense Modifier
-    PHANTOM_BARREL: { id: 'phantom_barrel', name: '幻影バレル', icon: '👻', desc: '20%で弾丸追加発射', type: 'BOSS_ARTIFACT', color: '#bdc3c7' },
+    PHANTOM_BARREL: { id: 'phantom_barrel', name: '幻影バレル', icon: '👻', desc: '20%で弾丸追加発射', type: 'BOSS_ARTIFACT', color: '#bdc3c7', config: { chance: 0.20, extra_shots: 1 } },
     BOUND_ORB:      { id: 'bound_orb',      name: 'バウンドオーブ', icon: '🥎', desc: '画面端で1回跳ね返る', type: 'BOSS_ARTIFACT', color: '#e67e22' },
     HOMING_BEACON:  { id: 'homing_beacon',  name: '誘導ビーコン', icon: '📡', desc: '弾に弱い追尾性能付与', type: 'BOSS_ARTIFACT', color: '#1abc9c' },
-    GIANT_KILLER:   { id: 'giant_killer',   name: 'ジャイアントキラー', icon: '🗡️', desc: 'Boss/Tankへダメ+40%', type: 'BOSS_ARTIFACT', color: '#d35400' },
+    GIANT_KILLER:   { id: 'giant_killer',   name: 'ジャイアントキラー', icon: '🗡️', desc: 'Boss/Tankへダメ+40%', type: 'BOSS_ARTIFACT', color: '#d35400', config: { multiplier: 1.4 } },
     CHAOS_DICE:     { id: 'chaos_dice',     name: 'カオスダイス', icon: '🎲', desc: 'ダメージが50%~200%で変動', type: 'BOSS_ARTIFACT', color: '#9b59b6' },
 
     // D. Elemental
-    OIL_FLASK:      { id: 'oil_flask',      name: 'オイル瓶', icon: '🛢️', desc: '火属性Hitで炎上ダメージ倍増', type: 'BOSS_ARTIFACT', color: '#e67e22' },
+    OIL_FLASK:      { id: 'oil_flask',      name: 'オイル瓶', icon: '🛢️', desc: '火属性Hitで炎上ダメージ倍増', type: 'BOSS_ARTIFACT', color: '#e67e22', config: { multiplier: 1.5 } },
     TESLA_COIL:     { id: 'tesla_coil',     name: 'テスラコイル', icon: '⚡', desc: '連鎖数 +2', type: 'BOSS_ARTIFACT', color: '#f1c40f', stats: { chain_count: 2 } },
     ZERO_CRYSTAL:   { id: 'zero_crystal',   name: '絶対零度', icon: '❄️', desc: '氷結敵への攻撃時 10%で即死', type: 'BOSS_ARTIFACT', color: '#74b9ff' },
     CORROSIVE_CROWN:{ id: 'corrosive_crown',name: '腐食の王冠', icon: '👑', desc: '毒敵死亡時 毒拡散', type: 'BOSS_ARTIFACT', color: '#2ecc71' },
     ELEM_MIXER:     { id: 'elem_mixer',     name: '属性ミキサー', icon: '⚗️', desc: '状態異常2種以上でダメ+50%', type: 'BOSS_ARTIFACT', color: '#ff7675' },
 
     // E. Unique
-    GLASS_CANNON:   { id: 'glass_cannon',   name: 'ガラスのキャノン', icon: '💣', desc: 'ダメ+100% / 被ダメ+100%', type: 'BOSS_ARTIFACT', color: '#fff', stats: { final_damage_mul: 1.0, damage_taken_mul: 1.0 } },
+    GLASS_CANNON:   { id: 'glass_cannon',   name: 'ガラスのキャノン', icon: '💣', desc: 'ダメ+100% / 被ダメ+100%', type: 'BOSS_ARTIFACT', color: '#fff', stats: { final_damage_mul: 2.0, damage_taken_mul: 1.0 } },
     MERCHANT_SOUL:  { id: 'merchant_soul',  name: '商人の魂', icon: '⚖️', desc: '所持金100G毎にダメ+1%', type: 'BOSS_ARTIFACT', color: '#f39c12' },
-    TIME_STOPPER:   { id: 'time_stopper',   name: '懐中時計', icon: '⏱️', desc: 'ボス出現時 5秒時間停止', type: 'BOSS_ARTIFACT', color: '#34495e' }
+    TIME_STOPPER:   { id: 'time_stopper',   name: '懐中時計', icon: '⏱️', desc: 'ボス出現時 5秒時間停止', type: 'BOSS_ARTIFACT', color: '#34495e' },
+
+    // --- New Artifacts: Variety & Niche ---
+    LUCKY_CAT:      { id: 'lucky_cat',      name: '招き猫', icon: '🐱', desc: '命中時、極稀に777G獲得', type: 'BOSS_ARTIFACT', color: '#ff7675' },
+    BIG_MUSHROOM:   { id: 'big_mushroom',   name: '巨大キノコ', icon: '🍄', desc: '弾丸が巨大化 / 弾速低下', type: 'BOSS_ARTIFACT', color: '#e17055', stats: { proj_speed_pct: -0.4, aoe_pct: 0.5 } },
+    PHOENIX_CORE:   { id: 'phoenix_core',   name: 'フェニックス', icon: '🔥', desc: '一度だけ力尽きても復活', type: 'BOSS_ARTIFACT', color: '#fab1a0' },
+
+    // --- Skill Specific Buffs ---
+    PSY_AMPLIFIER:  { id: 'psy_amplifier',  name: '念動増幅器', icon: '🧠', desc: '混乱中の敵死亡時に爆発', type: 'BOSS_ARTIFACT', color: '#a29bfe' },
+    CHLORO_ARMOR:   { id: 'chloro_armor',   name: '光合成装甲', icon: '🌿', desc: '茨回復中 被ダメ-30%', type: 'BOSS_ARTIFACT', color: '#55efc4' },
+    BOILING_POINT:  { id: 'boiling_point',  name: '沸騰点', icon: '♨️', desc: '炎上中の敵への激流ダメ2倍', type: 'BOSS_ARTIFACT', color: '#74b9ff' },
+
+    // --- Crew Exclusive Artifacts (2 per Crew) ---
+    // 1. Wolf
+    WOLF_INSIGNIA:  { id: 'wolf_insignia',  name: '司令官の誇り', icon: '🎖️', desc: 'ドローン/分身威力+50%', type: 'BOSS_ARTIFACT', color: '#d63031', requiredCrewId: 1 },
+    WOLF_RADIO:     { id: 'wolf_radio',     name: '戦術無線機', icon: '📻', desc: 'スキル持続時間 +50%', type: 'BOSS_ARTIFACT', color: '#ff7675', requiredCrewId: 1 },
+
+    // 2. Luna
+    LUNA_WING:      { id: 'luna_wing',      name: '月白の翼', icon: '🕊️', desc: '弾速の20%分 ダメージUP', type: 'BOSS_ARTIFACT', color: '#81ecec', requiredCrewId: 2 },
+    LUNA_TURBO:     { id: 'luna_turbo',     name: '加速チップ', icon: '⚡', desc: 'シールド中 連射速度1.5倍', type: 'BOSS_ARTIFACT', color: '#55efc4', requiredCrewId: 2 },
+
+    // 3. R-22
+    R22_WRENCH:     { id: 'r22_wrench',     name: '黄金のレンチ', icon: '🔧', desc: 'MP回復速度 +100%', type: 'BOSS_ARTIFACT', color: '#ffeaa7', requiredCrewId: 3, stats: { mp_regen_pct: 1.0 } },
+    R22_EYE:        { id: 'r22_eye',        name: '精密解析眼', icon: '👁️', desc: 'サポートGEM効果 +40%', type: 'BOSS_ARTIFACT', color: '#fab1a0', requiredCrewId: 3, stats: { support_effect: 0.4 } },
+
+    // 4. Dr. Xeno
+    XENO_FLASK:     { id: 'xeno_flask',     name: '禁断の試薬', icon: '🧪', desc: '状態異常(DoT)威力 +50%', type: 'BOSS_ARTIFACT', color: '#a29bfe', requiredCrewId: 4, stats: { dot_power_pct: 0.5 } },
+    XENO_CELL:      { id: 'xeno_cell',      name: '変異細胞', icon: '🧬', desc: '毒/燃焼の毎秒10%分 HP回復', type: 'BOSS_ARTIFACT', color: '#55efc4', requiredCrewId: 4 },
+
+    // 5. Mida
+    MIDAS_COIN:     { id: 'midas_coin',     name: 'ミダスの金貨', icon: '🟡', desc: '被弾時 10G失いダメージ無効', type: 'BOSS_ARTIFACT', color: '#fdcb6e', requiredCrewId: 5 },
+    MIDAS_BAG:      { id: 'midas_bag',      name: '強欲の袋', icon: '💰', desc: 'アイテム売却価格 2倍', type: 'BOSS_ARTIFACT', color: '#e17055', requiredCrewId: 5 }
 };
 
 export const MISC_ITEMS = {
@@ -159,34 +190,34 @@ export const GEMS = {
     },
     // [Updated] Additional Elements (Integrated from game.js injection)
     POISON: {
-        id: 'poison', name: 'Venom', type: GEM_TYPES.ACTIVE,
+        id: 'poison', name: '毒弾', type: GEM_TYPES.ACTIVE,
         color: '#8e44ad', damage: 15, rate: 100, speed: 3.5, level: 1 
     },
     PSYCHIC: {
-        id: 'psychic', name: 'Mindbend', type: GEM_TYPES.ACTIVE,
+        id: 'psychic', name: '念動力', type: GEM_TYPES.ACTIVE,
         color: '#e056fd', damage: 10, rate: 45, speed: 7, level: 1 
     },
     WATER: {
-        id: 'water', name: 'Tidal', type: GEM_TYPES.ACTIVE,
+        id: 'water', name: '激流', type: GEM_TYPES.ACTIVE,
         color: '#3498db', damage: 20, rate: 30, speed: 9, level: 1 
     },
     ELECTRIC: {
-        id: 'electric', name: 'Volt', type: GEM_TYPES.ACTIVE,
-        color: '#f1c40f', damage: 12, rate: 20, speed: 20, level: 1, chain_count: 3, chain_range: 250 
+        id: 'electric', name: '電撃', type: GEM_TYPES.ACTIVE,
+        color: '#f1c40f', damage: 12, rate: 29, speed: 20, level: 1, chain_count: 3, chain_range: 250 
     },
     ROCK: {
-        id: 'rock', name: 'Meteor', type: GEM_TYPES.ACTIVE,
+        id: 'rock', name: '隕石', type: GEM_TYPES.ACTIVE,
         color: '#7f8c8d', damage: 90, rate: 70, speed: 8, level: 1 // Buffed: Dmg 60->90, Rate 120->70
     },
     PLANT: {
-        id: 'plant', name: 'Thorn', type: GEM_TYPES.ACTIVE,
+        id: 'plant', name: '茨', type: GEM_TYPES.ACTIVE,
         color: '#2ecc71', damage: 18, rate: 40, speed: 8, level: 1, pierce_count: 2 
     },
 
     // Supports
     MULTISHOT: {
         id: 'multishot', name: '拡散', type: GEM_TYPES.SUPPORT,
-        color: '#2ecc71', projectiles: 2, damage_mod: 0.7 
+        color: '#2ecc71', projectiles: 1, damage_mod: 0.7 
     },
     POWER: {
         id: 'power', name: '威力', type: GEM_TYPES.SUPPORT,
@@ -198,7 +229,7 @@ export const GEMS = {
     },
     PIERCE: {
         id: 'pierce', name: '貫通', type: GEM_TYPES.SUPPORT,
-        color: '#e056fd', pierce_count: 99, damage_mod: 0.75
+        color: '#e056fd', pierce_count: 1, damage_mod: 0.75
     },
     CHAIN: {
         id: 'chain', name: '連鎖', type: GEM_TYPES.SUPPORT,
@@ -315,4 +346,48 @@ export const UI_STRINGS = {
     GAME_OVER: "SIGNAL LOST",
     STAGE_CLEAR: "SECTOR SECURED",
     EMPTY_SLOT: "EMPTY"
+};
+
+/** 演出・スキル効果用定数 (Moved from game.js) */
+/** シナジー図鑑用メタデータ */
+export const SYNERGY_METADATA = {
+    'steam': { name: "蒸発", combo: ["BURN", "SOAKED"], desc: "最大HP15%の固定ダメージを与える。" },
+    'toxic_detonation': { name: "毒爆", combo: ["BURN", "POISON"], desc: "毒スタックに応じた大爆発を起こす。" },
+    'electro_charged': { name: "感電", combo: ["SHOCK", "SOAKED"], desc: "周囲の敵に強力な連鎖電撃を放つ。" },
+    'meltdown': { name: "融解", combo: ["BURN", "FREEZE"], desc: "防御を貫通し、最大HP25%の超ダメージ。" },
+    'overload': { name: "過負荷", combo: ["BURN", "SHOCK"], desc: "範囲爆発と共に敵を大きくノックバックさせる。" },
+    'superconduct': { name: "超電導", combo: ["FREEZE", "SHOCK"], desc: "広範囲ダメージと共に氷の破片を飛散させる。" },
+    'corrosion': { name: "腐食", combo: ["POISON", "SOAKED"], desc: "持続的な酸のエリアを生成し、防御力を下げる。" },
+    'plague': { name: "伝染", combo: ["POISON", "SHOCK"], desc: "電撃を媒介にして毒スタックを周囲に拡散する。" },
+    'glacier': { name: "氷河", combo: ["FREEZE", "SOAKED"], desc: "凍結時間を大幅に延長し、砕氷ダメージを与える。" },
+    'chaos_flare': { name: "カオスフレア", combo: ["CONFUSION", "BURN"], desc: "混乱した敵が通った跡に炎の海を生成する。" },
+    'chaos_miasma': { name: "カオスマイズマ", combo: ["CONFUSION", "POISON"], desc: "混乱した敵が周囲に猛毒の霧を撒き散らす。" },
+    'chaos_storm': { name: "カオスストーム", combo: ["CONFUSION", "SHOCK"], desc: "混乱した敵の周囲に継続的な放電エリアを生成。" },
+    'chaos_frost': { name: "カオスフロスト", combo: ["CONFUSION", "FREEZE"], desc: "混乱した敵が周囲を凍りつかせる冷気を放つ。" }
+};
+
+export const EFFECT_CONSTANTS = {
+    PARTICLE_COUNT: 8,
+    BASE_CRIT_CHANCE: 0.05,
+    BASE_CRIT_MULTIPLIER: 1.5,
+
+    BURN_DURATION: 180,
+    BURN_TICK_RATE: 30,
+    BURN_DAMAGE_RATIO: 0.2,
+
+    NOVA_RADIUS: 120,
+    FIREBALL_RADIUS: 100, 
+    FREEZE_CHANCE: 0.4,
+    FREEZE_DURATION: 120,
+    SHATTER_PROJECTILE_COUNT: 12,
+    SHATTER_SPEED: 12,
+    MULTISHOT_SPREAD_ANGLE: 0.26, 
+
+    COLOR_CRIT: "#f1c40f",
+    COLOR_NORMAL: "#ffffff",
+    COLOR_BURN: "#e67e22",
+    COLOR_FREEZE: "#74b9ff",
+    COLOR_LEVELUP: "#00d2d3",
+    COLOR_TARGET: "#ff0000",
+    COLOR_CHAIN: "#f39c12"
 };

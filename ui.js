@@ -3,7 +3,8 @@
  * 憲法準拠: 1文字変数禁止、型ヒント必須。
  * 更新: スマートレベルアップ提案、スキルツリーラベル対応、Export修正、アーティファクト対応
  */
-import { GAME_SETTINGS, SKILL_TREE_NODES, GEM_TYPES, SHOP_ITEMS, GEMS, ARTIFACT_TYPES, BOSS_ARTIFACTS, CREW_DATA } from './constants.js';
+import { GAME_SETTINGS, SKILL_TREE_NODES, GEM_TYPES, SHOP_ITEMS, GEMS, ARTIFACT_TYPES, BOSS_ARTIFACTS, CREW_DATA, EFFECT_CONSTANTS, ENEMY_TIERS, SYNERGY_METADATA } from './constants.js';
+import { audioManager } from './audio-manager.js';
 
 // --- UI Queue System (Conflict Resolver) ---
 const uiQueue = [];
@@ -39,22 +40,61 @@ if (!tooltipContainer.id) {
 
 /**
  * ツールチップの内容を生成 (日本語化)
+ * サポートGEMの場合はレベルに応じた具体的な数値を算出する
  */
 export function getTooltipContent(item) {
     if (!item) return '';
     let html = `<div style="font-weight:bold; color:${item.color || '#fff'}">${item.name}</div>`;
     if (item.level) html += `<div style="font-size:10px; color:#aaa">Lv.${item.level}</div>`;
-    
-    // Icon for Artifacts
-    if (item.icon) html += `<div style="font-size:24px; text-align:center; margin:4px 0;">${item.icon}</div>`;
-    
-    html += `<div style="margin-top:4px;">${item.description || item.desc || ''}</div>`;
-    
-    // Stats
+
+    // アイコンの表示
+    let displayIcon = item.icon;
+    if (!displayIcon && (item.type === GEM_TYPES.ACTIVE || item.type === GEM_TYPES.SUPPORT)) {
+        displayIcon = (item.type === GEM_TYPES.ACTIVE) ? '⚔️' : '💠';
+    }
+
+    if (displayIcon) html += `<div style="font-size:24px; text-align:center; margin:4px 0;">${displayIcon}</div>`;
+
+    // サポートGEM用の動的説明生成
+    if (item.type === GEM_TYPES.SUPPORT) {
+        // game.jsのロジックに基づき、Lv1以降、1レベルごとに10%のボーナスを加算
+        const levelBonusMultiplier = 1 + (item.level - 1) * 0.1;
+        let dynamicDescription = "";
+
+        if (item.id === 'multishot') {
+            const totalProjectiles = 1 + (item.projectiles || 1) + (item.level - 1);
+            const damagePenalty = (item.damage_mod * levelBonusMultiplier).toFixed(2);
+            dynamicDescription = `拡散射撃: 弾数 ${totalProjectiles}<br>1発あたりの威力 x${damagePenalty}`;
+        } else if (item.id === 'power') {
+            const damageBoost = (item.damage_mod * levelBonusMultiplier).toFixed(2);
+            dynamicDescription = `威力強化: 全ダメージ x${damageBoost}`;
+        } else if (item.id === 'speed') {
+            const speedBoost = (item.speed_mod * levelBonusMultiplier).toFixed(2);
+            const rateMod = (item.rate_mod / levelBonusMultiplier).toFixed(2);
+            dynamicDescription = `高速化: 弾速 x${speedBoost}<br>連射間隔 x${rateMod}`;
+        } else if (item.id === 'pierce') {
+            const pierceCount = item.pierce_count + (item.level - 1);
+            const damagePenalty = (item.damage_mod * levelBonusMultiplier).toFixed(2);
+            dynamicDescription = `貫通: 最大 ${pierceCount}体貫通<br>ダメージ倍率 x${damagePenalty}`;
+        } else if (item.id === 'chain') {
+            const chainCount = item.chain_count + (item.level - 1);
+            const damagePenalty = (item.damage_mod * levelBonusMultiplier).toFixed(2);
+            dynamicDescription = `連鎖: 最大 ${chainCount}回連鎖<br>ダメージ倍率 x${damagePenalty}`;
+        } else if (item.id === 'omega_prism') {
+            const allBoost = (item.damage_mod * levelBonusMultiplier).toFixed(2);
+            dynamicDescription = `全性能強化: 全てのステータス x${allBoost}`;
+        }
+
+        html += `<div style="margin-top:4px; color:#66fcf1; font-size:11px; line-height:1.2;">${dynamicDescription}</div>`;
+    } else {
+        html += `<div style="margin-top:4px;">${item.description || item.desc || ''}</div>`;
+    }
+
+    // Stats (Active Gems等)
     if (item.damage) html += `<div>攻撃力: ${item.damage}</div>`;
     if (item.speed) html += `<div>弾速: ${item.speed}</div>`;
     if (item.rate) html += `<div>連射: ${item.rate}F</div>`;
-    
+
     if (item.stats) {
         Object.entries(item.stats).forEach(([k, v]) => {
             html += `<div style="font-size:10px; color:#bdc3c7">${k}: ${v}</div>`;
@@ -65,6 +105,11 @@ export function getTooltipContent(item) {
 
 export function showTooltip(ev, item) {
     if (!item) return;
+    // 既存の非表示タイマーがあれば解除する
+    if (window.tooltipHideTimer) {
+        clearTimeout(window.tooltipHideTimer);
+        window.tooltipHideTimer = null;
+    }
     tooltipContainer.innerHTML = getTooltipContent(item);
     tooltipContainer.style.display = 'block';
     moveTooltip(ev);
@@ -90,7 +135,14 @@ export function moveTooltip(ev) {
 window.moveTooltip = moveTooltip;
 
 export function hideTooltip() {
-    tooltipContainer.style.display = 'none';
+    // 既にタイマーが動いている場合は重ねない
+    if (window.tooltipHideTimer) clearTimeout(window.tooltipHideTimer);
+
+    // 0.5秒後に非表示にする
+    window.tooltipHideTimer = setTimeout(() => {
+        tooltipContainer.style.display = 'none';
+        window.tooltipHideTimer = null;
+    }, 500);
 }
 window.hideTooltip = hideTooltip;
 
@@ -151,6 +203,13 @@ export function updateHudDisplay() {
     const spEl = document.getElementById('sp-display');
     if (spEl) spEl.innerText = `${engineState.skillPoints}`;
 
+    // モーダルヘッダー内の情報（SP/Gold）を同期
+    const treeSpInfo = document.getElementById('tree-sp-info');
+    if (treeSpInfo) treeSpInfo.innerText = `SP: ${engineState.skillPoints}`;
+
+    const shopGoldInfo = document.getElementById('shop-gold-info');
+    if (shopGoldInfo) shopGoldInfo.innerText = `💰 ${engineState.gold}`;
+
     const statsText = document.getElementById('game-stats');
     if (statsText) statsText.innerText = `LV: ${engineState.currentLevel}`;
     
@@ -181,6 +240,22 @@ export function updateHudDisplay() {
         enFill.style.height = `${enPct}%`;
         enText.innerText = `${Math.floor(engineState.energy)}`;
     }
+
+    // Quick Buy Buttons State Update
+    const quickItems = [
+        { id: 'qbtn-repair', cost: SHOP_ITEMS.REPAIR.cost },
+        { id: 'qbtn-drone_col', cost: SHOP_ITEMS.DRONE_COL.cost },
+        { id: 'qbtn-drone_atk', cost: SHOP_ITEMS.DRONE_ATK.cost },
+        { id: 'qbtn-clone', cost: SHOP_ITEMS.CLONE.cost }
+    ];
+    quickItems.forEach(q => {
+        const btn = document.getElementById(q.id);
+        if (btn) {
+            if (engineState.gold < q.cost) btn.classList.add('disabled');
+            else btn.classList.remove('disabled');
+        }
+    });
+
     updateCrewHud();
 }
 window.updateHudDisplay = updateHudDisplay;
@@ -193,8 +268,14 @@ window.updateMainScreenLoadout = updateMainScreenLoadout;
 export function updateArtifactHud() {
     const container = document.getElementById('artifact-hud');
     if (!container) return;
+
+    // 状態が変わっていない場合は再構築しない (イベントリスナー維持のため)
+    const artifactCount = window.engineState.artifacts.length;
+    if (container.dataset.lastCount === artifactCount.toString()) return;
+    container.dataset.lastCount = artifactCount.toString();
+
     container.innerHTML = '';
-    
+
     window.engineState.artifacts.forEach(art => {
         const icon = document.createElement('div');
         // pointer-events: none for inner content to prevent flickering
@@ -210,6 +291,8 @@ export function updateArtifactHud() {
             e.preventDefault();
             window.showTooltip(e.touches[0], art);
         };
+        icon.ontouchend = window.hideTooltip;
+        icon.ontouchcancel = window.hideTooltip;
 
         container.appendChild(icon);
     });
@@ -224,12 +307,21 @@ export function updateCrewHud() {
     if (!container) {
         container = document.createElement('div');
         container.id = 'crew-hud';
-        // 画面右下、一時停止ボタンの上に配置 (被り防止: 150px -> 200px)
         container.style.cssText = "position:absolute; bottom:200px; right:10px; display:flex; flex-direction:column; gap:10px; z-index:45;";
         document.getElementById('device-frame').appendChild(container);
     }
 
-    // Clear and Rebuild
+    // クルーの状態（CD、活性化、表情）を文字列化して比較
+    const currentStatus = engineState.selectedCrew.map(id => {
+        const cd = Math.ceil((engineState.crewCooldowns[id] || 0) / 60);
+        const active = (engineState.crewActiveBuffs[id] || 0) > 0 ? '1' : '0';
+        return `${id}-${cd}-${active}-${engineState.crewStatusSuffix}`;
+    }).join('|');
+
+    // 状態に変更がないならDOMをいじらない
+    if (container.dataset.lastStatus === currentStatus) return;
+    container.dataset.lastStatus = currentStatus;
+
     container.innerHTML = '';
 
     engineState.selectedCrew.forEach(crewId => {
@@ -319,9 +411,19 @@ export function updateCrewHud() {
 
         // Tooltip
         const abilityInfo = crew.ability ? `\n[Skill] ${crew.ability.name}\n${crew.ability.desc}` : '';
-        wrapper.onmouseenter = (e) => window.showTooltip(e, { name: crew.name, desc: crew.job + abilityInfo, color: isReady ? '#fff' : '#aaa' });
+        const tooltipData = { name: crew.name, desc: crew.job + abilityInfo, color: isReady ? '#fff' : '#aaa' };
+
+        wrapper.onmouseenter = (e) => window.showTooltip(e, tooltipData);
         wrapper.onmousemove = (e) => window.moveTooltip(e);
         wrapper.onmouseleave = window.hideTooltip;
+
+        // Mobile touch support
+        wrapper.ontouchstart = (e) => {
+            // pointerdownとイベントが重複しないよう注意が必要な場合があるが、ここでは表示のみ
+            window.showTooltip(e.touches[0], tooltipData);
+        };
+        wrapper.ontouchend = window.hideTooltip;
+        wrapper.ontouchcancel = window.hideTooltip;
 
         container.appendChild(wrapper);
     });
@@ -538,6 +640,7 @@ export function refreshInventoryInterface() {
 
         // Case 2: No Selection -> Select Item or Show Menu
         if (uuid) {
+            audioManager.play('CLICK');
             if (type === 'SLOT') {
                 // Show Unequip Menu
                 showActionMenu(e.clientX, e.clientY, uuid);
@@ -745,7 +848,7 @@ export function refreshInventoryInterface() {
         // Icon Logic
         let icon = '?';
         if (item.type === 'ACTIVE') icon = '⚔️'; 
-        else if (item.type === 'SUPPORT') icon = '💎';
+        else if (item.type === 'SUPPORT') icon = '💠';
         else if (item.type === 'RING') icon = '💍';
         else if (item.type === 'AMULET') icon = '🧿';
         else if (item.id === 'gold') icon = '💰';
@@ -856,9 +959,14 @@ export function refreshShopInterface() {
         const card = document.createElement('div');
         // Simple card style inline
         card.style.cssText = `background:rgba(0,0,0,0.5); border:1px solid #444; padding:5px; border-radius:4px; display:flex; align-items:center; opacity:${isSoldOut ? 0.5 : 1}; cursor:${isSoldOut ? 'default' : 'pointer'};`;
-        
+
         const cost = isGem ? 300 : item.cost;
-        const icon = isGem ? '💎' : item.icon;
+
+        let icon = item.icon;
+        if (isGem) {
+            icon = (item.type === GEM_TYPES.ACTIVE) ? '⚔️' : '💠';
+        }
+
         const desc = isGem ? 'Lv.1 習得' : item.desc;
         const name = item.name;
 
@@ -882,7 +990,8 @@ export function refreshShopInterface() {
 
     Object.values(SHOP_ITEMS).forEach(item => createCard(item));
     Object.values(GEMS).forEach(gem => {
-        if (gem.type === GEM_TYPES.ACTIVE) createCard(gem, true);
+        // アクティブGEMおよびサポートGEMの両方をショップのラインナップに表示
+        createCard(gem, true);
     });
 }
 window.refreshShopInterface = refreshShopInterface;
@@ -1313,9 +1422,13 @@ window.initSkillTreeViewportControls = initSkillTreeViewportControls;
 
 // --- Level Up Options (Smart Suggestion System V2) ---
 
-export function showLevelUpOptions() {
-    // Queue Check
-    if (isModalOpen()) {
+/**
+ * レベルアップ選択肢を表示
+ * @param {boolean} fromQueue - キューからの連続呼び出しフラグ
+ */
+export function showLevelUpOptions(fromQueue = false) {
+    // Queue Check: 既に開いている場合はキューに積むが、キューからの呼び出し時はそのまま続行
+    if (!fromQueue && isModalOpen()) {
         uiQueue.push(showLevelUpOptions);
         return;
     }
@@ -1337,7 +1450,6 @@ export function showLevelUpOptions() {
     modal.classList.remove('hidden');
     container.innerHTML = '';
 
-    // ... (options生成ロジックは変更なし、省略可能だが完全性のため記述) ...
     const options = [];
     const maxHP = GAME_SETTINGS.BASE_MAX_HP + engineState.stats.hp_max;
     const hpRatio = engineState.baseIntegrity / maxHP;
@@ -1358,7 +1470,6 @@ export function showLevelUpOptions() {
             action: () => {
                 engineState.baseIntegrity = maxHP;
                 engineState.setShieldState(true);
-                engineState.skillPoints--;
             }
         });
     }
@@ -1405,9 +1516,13 @@ export function showLevelUpOptions() {
             icon: '🌲',
             isRare: node.type === 'KEYSTONE',
             action: () => {
+                // allocateNodeはSPを消費するため、一時的にSPを付与して相殺する (レベルアップ報酬はコストフリー)
+                engineState.skillPoints++;
                 if (engineState.allocateNode(node.id)) {
                     window.renderSkillTree();
                     window.updateHudDisplay();
+                } else {
+                    engineState.skillPoints--; // 万が一失敗した場合は戻す
                 }
             }
         });
@@ -1428,7 +1543,6 @@ export function showLevelUpOptions() {
                 isRare: false,
                 action: () => {
                     engineState.addItemToInventory(randomGem);
-                    engineState.skillPoints--;
                 }
             });
         }
@@ -1464,7 +1578,6 @@ export function showLevelUpOptions() {
             isRare: false,
             action: () => {
                 statOpt.apply();
-                engineState.skillPoints--;
             }
         });
     }
@@ -1481,10 +1594,8 @@ export function showLevelUpOptions() {
             </div>
         `;
         card.onclick = () => {
-            if (window.engineState.skillPoints <= 0) {
-                 alert("SPが足りません");
-                 return;
-            }
+            audioManager.play('CLICK');
+            // SPチェック削除: 報酬はコストフリーで受け取れる
             opt.action();
 
             // Check Queue: If next task exists, run it and DO NOT hide modal
@@ -1524,7 +1635,12 @@ export function showArtifactSelection(fromQueue = false) {
     engineState.isPaused = true;
     modal.classList.remove('hidden');
 
-    const pool = Object.values(BOSS_ARTIFACTS).filter(a => !engineState.artifacts.some(owned => owned.id === a.id));
+    // フィルタリング: 未所持 かつ (クルー指定がない かつ 選択中クルーに合致する)
+    const pool = Object.values(BOSS_ARTIFACTS).filter(a => {
+        const alreadyOwned = engineState.artifacts.some(owned => owned.id === a.id);
+        const crewCondition = !a.requiredCrewId || engineState.selectedCrew.includes(a.requiredCrewId);
+        return !alreadyOwned && crewCondition;
+    });
     const choices = [];
 
     for(let i=0; i<3; i++) {
@@ -1538,6 +1654,9 @@ export function showArtifactSelection(fromQueue = false) {
         choices.push({ name: "大金貨", desc: "1000 Gold", icon: "💰", action: () => engineState.gold += 1000 });
     }
 
+    // [Fix] 連打防止フラグ
+    let selectionMade = false;
+
     choices.forEach(art => {
         const card = document.createElement('div');
         card.className = 'upgrade-card rare';
@@ -1550,6 +1669,20 @@ export function showArtifactSelection(fromQueue = false) {
             </div>
         `;
         card.onclick = () => {
+            audioManager.play('CLICK');
+            // 既に選択済みなら無視
+            if (selectionMade) return;
+            selectionMade = true;
+
+            // 全カードを無効化（視覚的フィードバック）
+            const allCards = container.querySelectorAll('.upgrade-card');
+            allCards.forEach(c => {
+                c.style.pointerEvents = 'none';
+                c.style.opacity = '0.5';
+            });
+            card.style.opacity = '1';
+            card.style.boxShadow = `0 0 15px ${art.color || '#fff'}`;
+
             if (art.action) {
                 art.action();
             } else {
@@ -1559,10 +1692,12 @@ export function showArtifactSelection(fromQueue = false) {
                 window.showToast(`獲得: ${art.name}`, art.color);
             }
 
-            if (processNextUiTask()) return;
-
-            modal.classList.add('hidden');
-            engineState.isPaused = false;
+            // 少し待ってから閉じる（選択した感を出すため）
+            setTimeout(() => {
+                if (processNextUiTask()) return;
+                modal.classList.add('hidden');
+                engineState.isPaused = false;
+            }, 300);
         };
         container.appendChild(card);
     });
@@ -1582,11 +1717,67 @@ window.closeUpgradeModal = closeUpgradeModal;
 
 // --- General Menu Toggles ---
 
+/**
+ * シナジーの発見を記録
+ * @param {string} synergyId 
+ */
+export function recordSynergyDiscovery(synergyId) {
+    const discovered = JSON.parse(localStorage.getItem('DISCOVERED_SYNERGIES') || '{}');
+    if (!discovered[synergyId]) {
+        discovered[synergyId] = true;
+        localStorage.setItem('DISCOVERED_SYNERGIES', JSON.stringify(discovered));
+        showToast(`NEW SYNERGY: ${SYNERGY_METADATA[synergyId]?.name || synergyId}`, "#f1c40f");
+    }
+}
+window.recordSynergyDiscovery = recordSynergyDiscovery;
+
+/**
+ * シナジー図鑑の内容を更新
+ */
+export function refreshSynergyEncyclopedia() {
+    const container = document.getElementById('synergy-list');
+    if (!container) return;
+    container.innerHTML = '';
+
+    const discovered = JSON.parse(localStorage.getItem('DISCOVERED_SYNERGIES') || '{}');
+
+    Object.entries(SYNERGY_METADATA).forEach(([id, data]) => {
+        const isFound = discovered[id];
+        const card = document.createElement('div');
+        card.style.cssText = `
+            background: ${isFound ? 'rgba(30, 40, 50, 0.8)' : 'rgba(0,0,0,0.4)'};
+            border: 1px solid ${isFound ? '#66fcf1' : '#333'};
+            padding: 10px; border-radius: 8px; display: flex; flex-direction: column; gap: 5px;
+            opacity: ${isFound ? '1' : '0.5'};
+            transition: 0.3s;
+        `;
+
+        if (isFound) {
+            card.innerHTML = `
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <span style="color:#66fcf1; font-weight:bold; font-size:16px;">${data.name}</span>
+                    <span style="font-size:10px; color:#aaa;">${data.combo.join(' + ')}</span>
+                </div>
+                <div style="font-size:12px; color:#ccc; line-height:1.4;">${data.desc}</div>
+            `;
+        } else {
+            card.innerHTML = `
+                <div style="color:#555; font-weight:bold; text-align:center; padding:10px;">??? (未発見)</div>
+            `;
+        }
+        container.appendChild(card);
+    });
+}
+window.refreshSynergyEncyclopedia = refreshSynergyEncyclopedia;
+
 export function toggleMenu(menuId) {
-    const menus = ['skill-tree-modal', 'logic-modal', 'shop-modal', 'dock-modal', 'help-modal'];
+    const menus = ['skill-tree-modal', 'logic-modal', 'shop-modal', 'dock-modal', 'help-modal', 'synergy-modal'];
     const target = document.getElementById(menuId);
 
     // pre-render hooks
+    if (menuId === 'synergy-modal' && target.classList.contains('hidden')) {
+        refreshSynergyEncyclopedia();
+    }
     if (menuId === 'skill-tree-modal' && target.classList.contains('hidden')) {
         window.renderSkillTree();
     }
@@ -1598,6 +1789,7 @@ export function toggleMenu(menuId) {
         if (id !== menuId) document.getElementById(id).classList.add('hidden');
     });
 
+    audioManager.play('CLICK');
     if (target.classList.contains('hidden')) {
         target.classList.remove('hidden');
         window.engineState.isPaused = true;
@@ -1672,3 +1864,426 @@ export function handleDrop(ev, targetType, targetIndex) {
     window.updateHudDisplay();
 }
 window.handleDrop = handleDrop;
+
+/**
+ * クルーの必殺技カットインを表示する (アーケード演出)
+ * @param {number} crewId - 発動したクルーのID
+ */
+export function showAbilityCutIn(crewId) {
+    const crewData = CREW_DATA[crewId];
+    if (!crewData || !crewData.ability) return;
+
+    const overlay = document.getElementById('cutin-overlay');
+    const banner = document.getElementById('cutin-banner');
+    const imageElement = document.getElementById('cutin-img');
+    const crewNameElement = document.getElementById('cutin-crew-name');
+    const abilityNameElement = document.getElementById('cutin-ability');
+
+    if (!overlay || !banner || !imageElement) return;
+
+    // 演出データのセットアップ
+    imageElement.src = `${crewData.imgBase}a.png`; // 通常時の顔を使用
+    crewNameElement.innerText = `${crewData.job} ${crewData.name}`;
+    abilityNameElement.innerText = crewData.ability.name;
+
+    // アニメーションのトリガー
+    overlay.style.display = 'block';
+    banner.classList.remove('animate-cutin');
+
+    // 強制リフロー (アニメーションを最初から再生させるため)
+    void banner.offsetWidth; 
+
+    banner.classList.add('animate-cutin');
+
+    // 演出終了後に非表示に戻す (CSSの1.2秒に合わせて少し長めに設定)
+    setTimeout(() => {
+        overlay.style.display = 'none';
+        banner.classList.remove('animate-cutin');
+    }, 1300);
+}
+window.showAbilityCutIn = showAbilityCutIn;
+
+/**
+ * ゲームクリアリザルト画面を表示する
+ */
+/**
+ * ゲームクリアリザルト画面を表示する
+ */
+export function showGameClearScreen() {
+    const engineState = window.engineState;
+    if (!engineState) return;
+
+    // BGMを停止
+    audioManager.stopBgm();
+
+    // 既存のリザルトがあれば削除
+    const oldScreen = document.getElementById('result-screen');
+    if (oldScreen) oldScreen.remove();
+
+    // オーバーレイ作成
+    const overlay = document.createElement('div');
+    overlay.id = 'result-screen';
+    overlay.style.cssText = `
+        position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+        background: rgba(10, 12, 16, 0.95); z-index: 9000;
+        display: flex; flex-direction: column; align-items: center; justify-content: flex-start;
+        color: #fff; padding: 20px; box-sizing: border-box; overflow-y: auto;
+        animation: fadeIn 1s ease-out; font-family: 'Hiragino Kaku Gothic Pro', sans-serif;
+    `;
+
+    // --- Header ---
+    const header = document.createElement('div');
+    header.style.textAlign = 'center';
+    header.innerHTML = `
+        <div style="font-size: 32px; font-weight: bold; color: #f1c40f; text-shadow: 0 0 20px #f1c40f; margin-bottom: 5px;">
+            MISSION COMPLETE
+        </div>
+        <div style="font-size: 14px; color: #aaa; margin-bottom: 20px;">
+            全WAVE クリア達成
+        </div>
+    `;
+    overlay.appendChild(header);
+
+    // --- Clear Time & Basic Stats ---
+    const totalTimeSec = (Date.now() - engineState.startTime) / 1000;
+    const mins = Math.floor(totalTimeSec / 60);
+    const secs = Math.floor(totalTimeSec % 60);
+
+    const infoBar = document.createElement('div');
+    infoBar.style.cssText = "display:flex; gap:20px; font-size:14px; margin-bottom:30px; background:rgba(255,255,255,0.1); padding:10px 20px; border-radius:20px;";
+    infoBar.innerHTML = `
+        <div>⏱ TIME: <span style="color:#00d2d3; font-weight:bold;">${mins}m ${secs}s</span></div>
+        <div>💀 KILLS: <span style="color:#e74c3c; font-weight:bold;">${engineState.experiencePoints || 0}</span> (XP Calc)</div>
+        <div>💰 GOLD: <span style="color:#f1c40f; font-weight:bold;">${engineState.gold}</span></div>
+    `;
+    overlay.appendChild(infoBar);
+
+    // --- Loadout Analysis Section ---
+    const loadoutTitle = document.createElement('div');
+    loadoutTitle.innerHTML = "📝 最終装備 & 性能分析";
+    loadoutTitle.style.cssText = "width:100%; max-width:600px; border-bottom:1px solid #444; margin-bottom:15px; color:#aaa; font-size:14px;";
+    overlay.appendChild(loadoutTitle);
+
+    // Helper: Analyze and Render Skill Set
+    const renderSkillSet = (gems, label, scale) => {
+        const activeGem = gems[0];
+        if (!activeGem) return null;
+
+        const supports = gems.slice(1).filter(g => g !== null);
+        const container = document.createElement('div');
+        container.style.cssText = "width:100%; max-width:600px; background:rgba(30, 40, 50, 0.6); border:1px solid #555; border-radius:8px; padding:15px; margin-bottom:15px; display:flex; flex-direction:column; gap:10px;";
+
+        // 1. Header (Active Skill)
+        const headerRow = document.createElement('div');
+        headerRow.style.cssText = "display:flex; align-items:center; gap:15px; border-bottom:1px solid rgba(255,255,255,0.1); padding-bottom:10px;";
+
+        // Icon
+        const iconDiv = document.createElement('div');
+        iconDiv.style.cssText = `width:50px; height:50px; background:#222; border:2px solid ${activeGem.color}; border-radius:8px; display:flex; align-items:center; justify-content:center; font-size:24px; position:relative; box-shadow:0 0 10px ${activeGem.color};`;
+        iconDiv.innerHTML = "⚔️";
+        const lvBadge = document.createElement('div');
+        lvBadge.innerText = `Lv.${activeGem.level}`;
+        lvBadge.style.cssText = "position:absolute; bottom:-5px; right:-5px; background:#000; color:#fff; font-size:10px; padding:2px 4px; border-radius:4px; border:1px solid #555;";
+        iconDiv.appendChild(lvBadge);
+
+        // Name & Label
+        const nameDiv = document.createElement('div');
+        nameDiv.innerHTML = `
+            <div style="font-size:12px; color:#aaa;">${label} ARMAMENT</div>
+            <div style="font-size:18px; font-weight:bold; color:${activeGem.color};">${activeGem.name}</div>
+        `;
+
+        // Stats Calculation (Approximation)
+        // Base
+        let damage = activeGem.damage || 10;
+        if (activeGem.level > 1) damage *= (1 + (activeGem.level - 1) * 0.2);
+        let rate = activeGem.rate || 60;
+        if (activeGem.level > 1) rate *= (1 - (activeGem.level * 0.02));
+
+        // Multipliers
+        const stats = engineState.stats;
+        damage *= (1.0 + stats.damage_pct);
+        damage *= scale; // Main(1.0) or Sub(0.5)
+        rate /= (1.0 + stats.rate_pct);
+
+        // Apply Supports
+        const supportDetails = [];
+        const supportPower = 1.0 + stats.support_effect;
+
+        supports.forEach(sup => {
+            const lvl = (sup.level || 1) + (stats.support_level_bonus || 0);
+            const lvlBonus = 1 + ((lvl - 1) * 0.1 * supportPower);
+
+            let desc = "";
+            if (sup.damage_mod) {
+                damage *= (sup.damage_mod * lvlBonus);
+                desc += `威力x${(sup.damage_mod * lvlBonus).toFixed(2)} `;
+            }
+            if (sup.rate_mod) {
+                rate *= (sup.rate_mod / lvlBonus);
+                desc += `間隔x${(sup.rate_mod / lvlBonus).toFixed(2)} `;
+            }
+            if (sup.id === 'multishot') {
+                const count = 1 + (sup.projectiles || 1) + (lvl - 1);
+                desc += `弾数+${count} `;
+            }
+            if (sup.pierce_count) {
+                const p = sup.pierce_count + (lvl - 1);
+                desc += `貫通+${p} `;
+            }
+            if (sup.chain_count) desc += `連鎖追加 `;
+
+            supportDetails.push({ name: sup.name, lv: lvl, color: sup.color, desc: desc });
+        });
+
+        // Final Artifact/Passive Mods
+        if (stats.final_damage_mul > 0) damage *= stats.final_damage_mul;
+
+        const dpsTheoretical = (damage * (60 / rate)).toFixed(0);
+        const rateSec = (rate / 60).toFixed(2);
+
+        // Stats Display
+        const statsDiv = document.createElement('div');
+        statsDiv.style.cssText = "margin-left:auto; text-align:right; font-size:12px; line-height:1.4;";
+        statsDiv.innerHTML = `
+            <div>単発威力: <span style="color:#f1c40f;">${Math.floor(damage)}</span></div>
+            <div>発射間隔: ${rateSec}s</div>
+            <div>理論DPS: <span style="color:#00d2d3; font-weight:bold;">${dpsTheoretical}</span></div>
+        `;
+
+        headerRow.appendChild(iconDiv);
+        headerRow.appendChild(nameDiv);
+        headerRow.appendChild(statsDiv);
+        container.appendChild(headerRow);
+
+        // 2. Supports Visualization
+        if (supportDetails.length > 0) {
+            const linkRow = document.createElement('div');
+            linkRow.style.cssText = "display:flex; align-items:center; gap:10px; background:rgba(0,0,0,0.3); padding:8px; border-radius:4px;";
+            linkRow.innerHTML = `<div style="font-size:10px; color:#aaa; width:60px;">LINKS:</div>`;
+
+            supportDetails.forEach(sup => {
+                const supTag = document.createElement('div');
+                supTag.style.cssText = `display:flex; align-items:center; gap:5px; border:1px solid ${sup.color}; padding:2px 6px; border-radius:4px; font-size:11px;`;
+                supTag.innerHTML = `
+                    <span style="color:${sup.color}; font-weight:bold;">${sup.name} Lv.${sup.lv}</span>
+                    <span style="color:#fff; opacity:0.8; font-size:10px;">${sup.desc}</span>
+                `;
+                linkRow.appendChild(supTag);
+            });
+            container.appendChild(linkRow);
+        }
+
+        return container;
+    };
+
+    const mainPanel = renderSkillSet(engineState.equippedGems, "MAIN", 1.0);
+    if (mainPanel) overlay.appendChild(mainPanel);
+
+    const subPanel = renderSkillSet(engineState.altGems, "SUB", 0.5);
+    if (subPanel) overlay.appendChild(subPanel);
+
+    // --- Artifacts ---
+    if (engineState.artifacts.length > 0) {
+        const artContainer = document.createElement('div');
+        artContainer.style.cssText = "width:100%; max-width:600px; display:flex; gap:5px; flex-wrap:wrap; margin-bottom:20px;";
+        engineState.artifacts.forEach(art => {
+            const icon = document.createElement('div');
+            icon.innerHTML = art.icon;
+            icon.style.cssText = `width:32px; height:32px; border:1px solid ${art.color}; background:rgba(0,0,0,0.5); border-radius:4px; display:flex; align-items:center; justify-content:center; cursor:help;`;
+            // Tooltip integration
+            icon.onmouseenter = (e) => window.showTooltip(e, art);
+            icon.onmouseleave = window.hideTooltip;
+            artContainer.appendChild(icon);
+        });
+        overlay.appendChild(artContainer);
+    }
+
+    // --- Actual DPS Report ---
+    const statsSection = document.createElement('div');
+    statsSection.style.cssText = "width:100%; max-width:600px; margin-bottom:20px;";
+    statsSection.innerHTML = `<div style="border-bottom:1px solid #444; margin-bottom:10px; font-size:14px; color:#aaa;">⚔️ 戦闘実績 (Total Damage & DPS)</div>`;
+
+    const table = document.createElement('table');
+    table.style.cssText = "width:100%; font-size:12px; border-collapse:collapse;";
+    table.innerHTML = `
+        <tr style="color:#888; text-align:left; border-bottom:1px solid #555;">
+            <th style="padding:5px;">SOURCE</th>
+            <th style="text-align:right">TOTAL</th>
+            <th style="text-align:right">DPS</th>
+            <th style="text-align:right">%</th>
+        </tr>
+    `;
+
+    // Total for percentage
+    const totalDamageAll = Object.values(engineState.damageLog).reduce((a, b) => a + b, 0) || 1;
+    const sortedLogs = Object.entries(engineState.damageLog).sort(([,a], [,b]) => b - a);
+
+    sortedLogs.slice(0, 8).forEach(([srcId, val]) => { // Top 8 only
+        let name = srcId;
+        let color = "#fff";
+
+        // Resolve Name (Use imported GEMS constant)
+        const gem = Object.values(GEMS).find(g => g.id === srcId);
+
+        // Check local GEMS import or use fallback
+        // Since we are in ui.js which imports GEMS, use local reference.
+        // Wait, GEMS might not include synergy names.
+
+        if (gem) { name = gem.name; color = gem.color; }
+        else if (srcId === 'shield_bash') { name = "シールドバッシュ"; color = "#66fcf1"; }
+        else if (srcId === 'reflected_orb') { name = "反射弾"; color = "#66fcf1"; }
+        else if (srcId === 'burn_dot') { name = "炎上(DoT)"; color = "#e67e22"; }
+        else if (srcId === 'poison_dot') { name = "毒(DoT)"; color = "#8e44ad"; }
+        // Synergy names
+        else if (srcId === 'steam') { name = "蒸発反応"; color = "#dff9fb"; }
+        else if (srcId === 'meltdown') { name = "融解反応"; color = "#fab1a0"; }
+        else if (srcId === 'overload') { name = "過負荷"; color = "#ff5252"; }
+        else if (srcId === 'superconduct') { name = "超電導"; color = "#a29bfe"; }
+
+        const dps = (val / totalTimeSec).toFixed(1);
+        const pct = ((val / totalDamageAll) * 100).toFixed(1);
+
+        const tr = document.createElement('tr');
+        tr.style.borderBottom = "1px solid #333";
+        tr.innerHTML = `
+            <td style="padding:4px; color:${color}">${name}</td>
+            <td style="text-align:right; color:#ddd;">${Math.floor(val).toLocaleString()}</td>
+            <td style="text-align:right; font-weight:bold;">${dps}</td>
+            <td style="text-align:right; color:#888;">${pct}%</td>
+        `;
+        table.appendChild(tr);
+    });
+    statsSection.appendChild(table);
+    overlay.appendChild(statsSection);
+
+    // --- Buttons ---
+    const btnRow = document.createElement('div');
+    btnRow.style.cssText = "display:flex; gap:20px; margin-top:20px; margin-bottom:40px;";
+
+    // Skill Tree View Button
+    const treeBtn = document.createElement('button');
+    treeBtn.innerHTML = "🌲 スキルツリー確認";
+    treeBtn.style.cssText = "padding:12px 24px; background:#2c3e50; border:1px solid #00d2d3; color:#00d2d3; border-radius:4px; cursor:pointer; font-weight:bold;";
+    treeBtn.onclick = () => {
+        // Open tree modal on top of result screen
+        const treeModal = document.getElementById('skill-tree-modal');
+        if (treeModal) {
+            toggleMenu('skill-tree-modal');
+            // Force high z-index to overlay result screen
+            treeModal.style.zIndex = "10000";
+
+            // Add a temporary "Close" listener to restore z-index logic if needed, 
+            // but toggleMenu handles hidden class.
+            // When closing tree (via its X button), we just want to see the result screen again.
+            // Result screen is z-index 9000. Tree default is lower? No, modal-overlay is 6000.
+            // So manually setting 10000 works.
+        }
+    };
+    btnRow.appendChild(treeBtn);
+
+    // Return Button
+    const returnBtn = document.createElement('button');
+    returnBtn.innerText = "タイトルに戻る";
+    returnBtn.style.cssText = "padding:12px 24px; background:#e74c3c; color:#fff; border:none; border-radius:4px; font-weight:bold; cursor:pointer;";
+    returnBtn.onclick = () => location.reload();
+    btnRow.appendChild(returnBtn);
+
+    overlay.appendChild(btnRow);
+
+    // --- Wave Graph (Canvas) ---
+    // (Optional: If screen space allows, keep it at bottom or remove to reduce clutter)
+    // Let's keep it but make it compact.
+    const chartDiv = document.createElement('div');
+    chartDiv.style.cssText = "width:100%; max-width:600px; height:100px; border:1px solid #333; background:#111; border-radius:4px; position:relative;";
+    const cvs = document.createElement('canvas');
+    cvs.width = 600; cvs.height = 100;
+    cvs.style.width = "100%"; cvs.style.height = "100%";
+    chartDiv.appendChild(cvs);
+    overlay.appendChild(chartDiv);
+
+    // Simple Graph
+    const ctx = cvs.getContext('2d');
+    const logs = engineState.waveLog;
+    if (logs.length > 1) {
+        const maxTime = logs[logs.length-1].time;
+        ctx.beginPath();
+        ctx.strokeStyle = "#00d2d3";
+        ctx.lineWidth = 2;
+        ctx.moveTo(0, 100);
+        logs.forEach((log, i) => {
+            const x = (log.time / maxTime) * 600;
+            const y = 100 - ((i / logs.length) * 80 + 10); // Rough step up
+            ctx.lineTo(x, y);
+            ctx.fillStyle = "#f1c40f";
+            ctx.fillRect(x-2, y-2, 4, 4);
+        });
+        ctx.stroke();
+        ctx.fillStyle = "rgba(255,255,255,0.5)";
+        ctx.font = "10px sans-serif";
+        ctx.fillText("PROGRESS", 5, 15);
+    }
+
+    // Inject Styles for FadeIn
+    const style = document.createElement('style');
+    style.innerHTML = `@keyframes fadeIn { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }`;
+    overlay.appendChild(style);
+
+    document.body.appendChild(overlay);
+}
+window.showGameClearScreen = showGameClearScreen;
+window.showAbilityCutIn = showAbilityCutIn;
+
+/**
+ * GEMレベルアップ（合成）の演出を表示
+ */
+export function showFuseEffect(item) {
+    const overlay = document.getElementById('fuse-overlay');
+    const banner = document.getElementById('fuse-banner');
+    const nameEl = document.getElementById('fuse-item-name');
+    const lvEl = document.getElementById('fuse-item-lv');
+
+    if (!overlay || !banner) return;
+
+    nameEl.innerText = item.name.toUpperCase();
+    lvEl.innerText = `Lv.${item.level}`;
+
+    // アイテムの色をテーマカラーに反映
+    banner.style.borderColor = item.color;
+    banner.style.background = `linear-gradient(90deg, transparent, ${item.color}33 50%, transparent)`;
+    nameEl.style.color = item.color;
+    nameEl.style.textShadow = `0 0 10px ${item.color}`;
+
+    overlay.style.display = 'block';
+    banner.classList.remove('animate-fuse');
+    void banner.offsetWidth; // reflow
+    banner.classList.add('animate-fuse');
+
+    setTimeout(() => {
+        overlay.style.display = 'none';
+    }, 1900);
+}
+window.showFuseEffect = showFuseEffect;
+
+export function toggleBgmState() {
+    // クリック音を鳴らす
+    audioManager.play('CLICK');
+
+    // ミュート状態を切り替え
+    const isMuted = audioManager.toggleBgm();
+
+    // ボタンの見た目を更新
+    const btn = document.getElementById('bgm-btn');
+    if (btn) {
+        if (isMuted) {
+            btn.innerText = "♫ OFF";
+            btn.style.color = "#7f8c8d";
+            btn.style.borderColor = "#7f8c8d";
+        } else {
+            btn.innerText = "♫ ON";
+            btn.style.color = "#66fcf1";
+            btn.style.borderColor = "#66fcf1";
+        }
+    }
+}
+window.toggleBgmState = toggleBgmState;
